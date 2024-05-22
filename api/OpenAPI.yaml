@@ -1,0 +1,214 @@
+openapi: 3.1.0
+info:
+  title: LM Evaluation Harness API
+  description: API for submitting, polling, and retrieving results of LM Evaluation Harness jobs.
+  version: 0.1.0
+paths:
+  /submit_job:
+    post:
+      summary: Submit a new job
+      description: Submits a new job with the given CLI arguments for the LM Evaluation Harness and returns a task_id.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                model:
+                  type: string
+                  description: The name of the model to evaluate.
+                model_args:
+                  type: string
+                  description: Arguments specific to the model.
+                tasks:
+                  type: string
+                  description: A comma-separated list of tasks to evaluate the model on.
+                num_fewshot:
+                  type: integer
+                  description: The number of few-shot examples.
+                gen_kwargs:
+                  type: string
+                  description: Additional generation arguments.
+                log_samples:
+                  type: boolean
+                  description: Whether to log samples (true if present).
+                limit:
+                  type: number
+                  description: A limit value between 0 and 1.
+                  minimum: 0
+                  maximum: 1
+                use_cache:
+                  type: string
+                  description: Path to the cache to use.
+                decontamination_ngrams_path:
+                  type: string
+                  description: Path to the decontamination n-grams.
+                check_integrity:
+                  type: boolean
+                  description: Whether to check integrity (true if present).
+                write_out:
+                  type: string
+                  description: File path to write output.
+                show_config:
+                  type: boolean
+                  description: Whether to show configuration (true if present).
+                include_path:
+                  type: string
+                  description: Path to include in the evaluation.
+              required:
+                - model
+                - tasks
+      responses:
+        '200':
+          description: Job successfully submitted
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  task_id:
+                    type: string
+                    description: The ID of the submitted task.
+        '400':
+          description: Invalid request parameters
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    description: Error message
+
+  /poll_job:
+    get:
+      summary: Poll job status
+      description: Retrieves the status of a submitted job using the task_id.
+      parameters:
+        - name: task_id
+          in: query
+          required: true
+          schema:
+            type: string
+          description: The ID of the task to poll.
+      responses:
+        '200':
+          description: Job status retrieved successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  task_id:
+                    type: string
+                    description: The ID of the task.
+                  status:
+                    type: string
+                    description: The current status of the task (e.g., 'pending', 'running', 'completed', 'failed').
+        '404':
+          description: Task not found
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    description: Error message
+
+  /job_results:
+    get:
+      summary: Retrieve job results
+      description: Retrieves the results of a completed job using the task_id if the LM Evaluation Harness JSON output exists.
+      parameters:
+        - name: task_id
+          in: query
+          required: true
+          schema:
+            type: string
+          description: The ID of the task to retrieve results for.
+      responses:
+        '200':
+          description: Job results retrieved successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  task_id:
+                    type: string
+                    description: The ID of the task.
+                  results:
+                    type: object
+                    description: The JSON output of the LM Evaluation Harness.
+        '404':
+          description: Task results not found or job not completed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    description: Error message
+
+  /list_jobs:
+    get:
+      summary: Retrieve all jobs
+      description: Return an array of job objects, including task_id and status.
+      responses:
+        '200':
+          description: Job results retrieved successfully
+          content:
+            application/json:
+              schema:
+                type: array
+                description: Array of job objects
+                items:
+                  title: Job
+                  description: A job
+                  type: object
+                  properties:
+                    task_id:
+                      description: Task id of the job
+                      type: string
+                    status:
+                      description: Job's status
+                      type: string
+                  required:
+                    - task_id
+                    - status
+
+  /cancel_job:
+    delete:
+      summary: Cancel a job
+      description: Cancel a running job.
+      parameters:
+        - name: task_id
+          in: query
+          required: true
+          schema:
+            type: string
+          description: The ID of the task to cancel.
+      responses:
+        '200':
+          description: The status of the cancellation
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    description: The status of the operation.
+        '404':
+          description: The specified job doesn't exist
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    description: Error message

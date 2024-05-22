@@ -1,0 +1,49 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: lm-eval
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: lm-eval
+  strategy:
+    rollingUpdate:
+      maxSurge: 25%
+      maxUnavailable: 25%
+    type: RollingUpdate
+  template:
+    metadata:
+      labels:
+        app: lm-eval
+    spec:
+      containers:
+      - env:
+        - name: GENAI_KEY
+          valueFrom:
+            secretKeyRef:
+              key: key
+              name: genai-key
+        image: quay.io/lm-eval-aas
+        imagePullPolicy: Always
+        name: container
+        ports:
+        - containerPort: 8080
+          protocol: TCP
+        resources: {}
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - ALL
+        terminationMessagePath: /dev/termination-log
+        terminationMessagePolicy: File
+      dnsPolicy: ClusterFirst
+      imagePullSecrets:
+      - name: icr-image-push
+      restartPolicy: Always
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      terminationGracePeriodSeconds: 30

@@ -1,0 +1,31 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+- ../base
+
+images:
+- name: quay.io/lm-eval-aas
+  newName: quay.io/yhwang/lm-eval-aas-flask
+  newTag: test
+
+labels:
+- includeSelectors: true
+  pairs:
+    application-crd-id: lm-eval-aas
+
+patches:
+  - patch: |-
+      apiVersion: v1
+      kind: Secret
+      metadata:
+        name: genai-key
+      data:
+        key: cGFrLVhLczdYSlRfUlN6anVKTXZzeV81VWEzNlFWZ3JwVm1aaEdUS1VuZldNRVk=
+  - patch: |-
+      apiVersion: route.openshift.io/v1
+      kind: Route
+      metadata:
+        name: lm-eval-webui-route
+      spec:
+        host: lm-eval-webui-route-lm-eval.fm-model-train-9ca4d14d48413d18ce61b80811ba4308-0000.us-south.containers.appdomain.cloud

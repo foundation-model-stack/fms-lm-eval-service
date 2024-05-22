@@ -1,0 +1,7 @@
+apiVersion: v1
+data:
+  key: <secret key>
+kind: Secret
+metadata:
+  name: genai-key
+type: Opaque
