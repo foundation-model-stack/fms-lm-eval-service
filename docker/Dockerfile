@@ -32,4 +32,4 @@ ENV PYTHONPATH=/home/myuser/.local/lib/python3.11/site-packages:/home/myuser/lm-
 ENV HF_HOME=/home/myuser/hf_home
 EXPOSE 8080
 
-CMD ["waitress-serve", "--host", "0.0.0.0", "--port", "8080", "app:app"]
+CMD ["waitress-serve", "--host", "0.0.0.0", "--port", "8080", "--call", "app:create_app"]
