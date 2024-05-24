@@ -45,7 +45,7 @@ def create_app(test_config=None):
             ('--num_fewshot', None if request.json.get('num_fewshot')
              is None else str(request.json.get('num_fewshot'))),
             ('--gen_kwargs', request.json.get('gen_kwargs')),
-            # TODO disable as CLI arg- set to `/output` then return results.json when it's done
+            # disable as CLI arg- set to `/output` then return results.json when it's done (fixme)
             ('--output_path', request.json.get('output_path')),
             # either present or not
             ('--log_samples', request.json.get('log_samples')),
@@ -160,21 +160,21 @@ def create_app(test_config=None):
                 f"{_OUTPUT_PATH}/{task_id}/stderr.log", 'w', encoding="utf-8"
         ) as stderr:
 
-            process = subprocess.Popen(
-                cmd, stdout=stdout, stderr=stderr, universal_newlines=True)
+            with subprocess.Popen(
+                    cmd, stdout=stdout, stderr=stderr, universal_newlines=True) as process:
 
-            while not _jobs[task_id].get(_CANCEL_KEY, False) and process.returncode is None:
-                try:
-                    # Execute the command and handle cancellation every
-                    # 10 seconds
-                    process.wait(timeout=10)
-                except subprocess.TimeoutExpired:
-                    pass
+                while not _jobs[task_id].get(_CANCEL_KEY, False) and process.returncode is None:
+                    try:
+                        # Execute the command and handle cancellation every
+                        # 10 seconds
+                        process.wait(timeout=10)
+                    except subprocess.TimeoutExpired:
+                        pass
 
-            # handle the cancel case before closing the stderr and stdout
-            if _jobs[task_id].get(_CANCEL_KEY, False):
-                process.kill()
-                _jobs[task_id][_STATUS_KEY] = _STATUS_CANCEALLED
+                # handle the cancel case before closing the stderr and stdout
+                if _jobs[task_id].get(_CANCEL_KEY, False):
+                    process.kill()
+                    _jobs[task_id][_STATUS_KEY] = _STATUS_CANCEALLED
 
         # handle non-cancel case here
         if not _jobs[task_id].get(_CANCEL_KEY, False):
