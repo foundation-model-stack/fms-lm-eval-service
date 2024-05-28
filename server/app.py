@@ -5,6 +5,7 @@ import subprocess
 import json
 import os
 import fnmatch
+from typing import TypedDict, Dict, List, Literal
 from flask import Flask, jsonify, request
 from flask_cors import CORS
 
@@ -14,10 +15,19 @@ _OUTPUT_PATH = f'{_HOME_PATH}/output'
 _CANCEL_KEY = 'cancel'
 _STATUS_KEY = 'status'
 _TASK_ID_KEY = 'task_id'
-_STATUS_ERROR = 'error'
+_ARGS_KEY = 'args'
+_ERROR_KEY = _STATUS_ERROR = 'error'
 _STATUS_RUNNING = 'running'
 _STATUS_COMPLETE = 'complete'
 _STATUS_CANCEALLED = 'cancelled'
+
+
+class _Task(TypedDict):
+    """ The data struct for the Task object """
+    status: Literal['running', 'error', 'cancelled', 'complete']
+    args: List[str]
+    cancel: bool
+    error: str
 
 
 def create_app(test_config=None):
@@ -32,11 +42,14 @@ def create_app(test_config=None):
 
     # A dictionary to store job status
     # This will be moved to the CRD or storage
-    _jobs = {}
+    _jobs: Dict[str, _Task] = {}
 
     @app.route('/submit_job', methods=['POST'])
     def submit_job():
         """ Submit a job and spawn a subprocess to run the job """
+        if request.json is None:
+            return jsonify({_ERROR_KEY: 'The body is not application/json'}), 415
+
         task_id = str(uuid.uuid4())
         args = [
             ('--model', request.json.get('model')),
@@ -67,11 +80,15 @@ def create_app(test_config=None):
                         '--log_samples', '--trust_remote_code', '--show_config']
         filtered_args = [(arg, value)
                          for arg, value in args if value is not None]
-        flat_and_filtered_args = [item if sublist[0] not in novalue_args else sublist[0]
-                                  for sublist in filtered_args for item in sublist]
+        flat_and_filtered_args: List[str] = [item if sublist[0] not in novalue_args else sublist[0]
+                                             for sublist in filtered_args for item in sublist]
 
-        _jobs[task_id] = {_STATUS_KEY: _STATUS_RUNNING,
-                          'args': flat_and_filtered_args}
+        _jobs[task_id] = {
+            _STATUS_KEY: _STATUS_RUNNING,
+            _ARGS_KEY: flat_and_filtered_args,
+            _CANCEL_KEY: False,
+            _ERROR_KEY: ''}
+
         threading.Thread(target=_background_task, args=(task_id,)).start()
         return jsonify({_TASK_ID_KEY: task_id})
 
@@ -88,9 +105,11 @@ def create_app(test_config=None):
     def job_results():
         """ Get the results of a job. Return the results as a JSON object """
         task_id = request.args.get(_TASK_ID_KEY)
+        if task_id not in _jobs:
+            return jsonify({_ERROR_KEY: 'The specified job does not exist'}), 404
 
         def _handle_error():
-            return jsonify({_STATUS_ERROR: _jobs[task_id][_STATUS_ERROR]})
+            return jsonify({_ERROR_KEY: _jobs[task_id][_ERROR_KEY]})
 
         def _handle_running():
             return jsonify({_STATUS_KEY: 'The job is still running'})
@@ -107,7 +126,7 @@ def create_app(test_config=None):
                     result = json.load(f)
                 return jsonify(result)
 
-            return jsonify({_STATUS_ERROR: 'Job completed but no result found'})
+            return jsonify({_ERROR_KEY: 'Job completed but no result found'})
 
         handlers = {
             _STATUS_ERROR: _handle_error,
@@ -116,13 +135,10 @@ def create_app(test_config=None):
             _STATUS_COMPLETE: _handle_complete,
         }
 
-        if task_id not in _jobs:
-            return jsonify({_STATUS_ERROR: 'The specified job does not exist'}), 404
-
         if _jobs[task_id][_STATUS_KEY] in handlers:
             return handlers[_jobs[task_id][_STATUS_KEY]]()
 
-        return jsonify({_STATUS_ERROR: f"unknown state: {_jobs[task_id][_STATUS_KEY]}"})
+        return jsonify({_ERROR_KEY: f"unknown state: {_jobs[task_id][_STATUS_KEY]}"})
 
     @app.route('/list_jobs', methods=['GET'])
     def list_jobs():
@@ -139,7 +155,7 @@ def create_app(test_config=None):
         task_id = request.args.get(_TASK_ID_KEY)
 
         if task_id not in _jobs:
-            return jsonify({_STATUS_ERROR: 'The specified job does not exist'}), 404
+            return jsonify({_ERROR_KEY: 'The specified job does not exist'}), 404
 
         _jobs[task_id][_CANCEL_KEY] = True
 
@@ -148,7 +164,7 @@ def create_app(test_config=None):
         )
 
     def _background_task(task_id):
-        flat_and_filtered_args = _jobs[task_id]['args']
+        flat_and_filtered_args = _jobs[task_id][_ARGS_KEY]
         os.makedirs(f"{_OUTPUT_PATH}/{task_id}")
         cmd = ['python', '-m', 'lm_eval'] + flat_and_filtered_args + \
             ['--output_path', f"{_OUTPUT_PATH}/{task_id}"]
@@ -185,7 +201,7 @@ def create_app(test_config=None):
                 ) as err_out:
 
                     _jobs[task_id][_STATUS_KEY] = _STATUS_ERROR
-                    _jobs[task_id][_STATUS_ERROR] = err_out.read()
+                    _jobs[task_id][_ERROR_KEY] = err_out.read()
             else:
                 _jobs[task_id][_STATUS_KEY] = _STATUS_COMPLETE
 
@@ -202,4 +218,4 @@ def create_app(test_config=None):
 if __name__ == '__main__':
     service_app = create_app()
     service_app.run(debug=True, host='0.0.0.0',
-                    port=os.getenv("FLASK_PORT", default="8080"))
+                    port=int(os.getenv("FLASK_PORT", default="8080")))
