@@ -9,9 +9,7 @@ from typing import TypedDict, Dict, List, Literal
 from flask import Flask, jsonify, request
 from flask_cors import CORS
 
-_DEFAULT_USER = 'myuser'
-_HOME_PATH = f'/home/{_DEFAULT_USER}'
-_OUTPUT_PATH = f'{_HOME_PATH}/output'
+_OUTPUT_PATH = '/opt/app-root/src/output'
 _CANCEL_KEY = 'cancel'
 _STATUS_KEY = 'status'
 _TASK_ID_KEY = 'task_id'
