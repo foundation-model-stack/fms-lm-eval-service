@@ -1,0 +1,17 @@
+apiVersion: lm-eval-service.github.com/v1beta1
+kind: EvalJob
+metadata:
+  labels:
+    app.kubernetes.io/name: fms-lm-eval-service
+    app.kubernetes.io/managed-by: kustomize
+  name: evaljob-sample
+spec:
+  model: ibm_genai
+  modelArgs:
+  - name: model_id
+    value: ibm/granite-7b-lab
+  tasks:
+  - unfair_tos
+  numFewShot: 5
+  logSamples: true
+  limit: "5"

@@ -1,0 +1,49 @@
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: manager-role
+rules:
+- apiGroups:
+  - ""
+  resources:
+  - configmaps
+  verbs:
+  - get
+  - watch
+- apiGroups:
+  - ""
+  resources:
+  - pods
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - watch
+- apiGroups:
+  - lm-eval-service.github.com
+  resources:
+  - evaljobs
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - lm-eval-service.github.com
+  resources:
+  - evaljobs/finalizers
+  verbs:
+  - update
+- apiGroups:
+  - lm-eval-service.github.com
+  resources:
+  - evaljobs/status
+  verbs:
+  - get
+  - patch
+  - update
