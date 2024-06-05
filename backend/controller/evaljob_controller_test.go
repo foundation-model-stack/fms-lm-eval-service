@@ -51,7 +51,13 @@ var _ = Describe("EvalJob Controller", func() {
 						Name:      resourceName,
 						Namespace: "default",
 					},
-					// TODO(user): Specify other spec details if needed.
+					Spec: lmevalservicev1beta1.EvalJobSpec{
+						Model: "test",
+						ModelArgs: []lmevalservicev1beta1.Arg{
+							{Name: "arg1", Value: "value1"},
+						},
+						Tasks: []string{"task1", "task2"},
+					},
 				}
 				Expect(k8sClient.Create(ctx, resource)).To(Succeed())
 			}

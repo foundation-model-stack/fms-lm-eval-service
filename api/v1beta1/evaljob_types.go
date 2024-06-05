@@ -24,10 +24,12 @@ import (
 // NOTE: json tags are required.  Any new fields you add must have json tags for the fields to be serialized.
 
 // Represent a job's status
-// +kubebuilder:validation:Enum=Scheduled;Running;Complete;Cancelled
+// +kubebuilder:validation:Enum=New;Scheduled;Running;Complete;Cancelled
 type JobState string
 
 const (
+	// The job is just created
+	NewJobState JobState = "New"
 	// The job is scheduled and waiting for available resources to run it
 	ScheduledJobState JobState = "Scheduled"
 	// The job is running
@@ -38,18 +40,18 @@ const (
 	CancelledJobState JobState = "Cancelled"
 )
 
-// +kubebuilder:validation:Enum=NoResult;Succeeded;Failed;Cancelled
-type Result string
+// +kubebuilder:validation:Enum=NoReason;Succeeded;Failed;Cancelled
+type Reason string
 
 const (
 	// Job is still running and no final result yet
-	NoResult Result = "NoResult"
+	NoReason Reason = "NoReason"
 	// Job finished successfully
-	SucceedResult Result = "Succeeded"
+	SucceedReason Reason = "Succeeded"
 	// Job failed
-	FailedResult Result = "Failed"
+	FailedReason Reason = "Failed"
 	// Job is cancelled
-	CancelledResult Result = "Cancelled"
+	CancelledReason Reason = "Cancelled"
 )
 
 type Arg struct {
@@ -93,18 +95,24 @@ type EvalJobStatus struct {
 	// The name of the Pod that runs the evaluation job
 	// +optional
 	PodName string `json:"podName,omitempty"`
-	// Status of the job
+	// State of the job
 	// +optional
 	State JobState `json:"state,omitempty"`
 	// Final result of the job
 	// +optional
-	Result Result `json:"result,omitempty"`
+	Reason Reason `json:"reason,omitempty"`
 	// Message about the current/final status
 	// +optional
 	Message string `json:"message,omitempty"`
 	// Information when was the last time the job was successfully scheduled.
 	// +optional
 	LastScheduleTime *metav1.Time `json:"lastScheduleTime,omitempty"`
+	// Information when the job's state changes to Complete.
+	// +optional
+	CompleteTime *metav1.Time `json:"completeTime,omitempty"`
+	// Evaluation results
+	// +optional
+	Results string `json:"results,omitempty"`
 }
 
 // +kubebuilder:object:root=true

@@ -57,6 +57,8 @@ func main() {
 	var probeAddr string
 	var secureMetrics bool
 	var enableHTTP2 bool
+	var configMap string
+	var namespace string
 	flag.StringVar(&metricsAddr, "metrics-bind-address", "0", "The address the metric endpoint binds to. "+
 		"Use the port :8080. If not set, it will be 0 in order to disable the metrics server")
 	flag.StringVar(&probeAddr, "health-probe-bind-address", ":8081", "The address the probe endpoint binds to.")
@@ -67,6 +69,8 @@ func main() {
 		"If set the metrics endpoint is served securely")
 	flag.BoolVar(&enableHTTP2, "enable-http2", false,
 		"If set, HTTP/2 will be enabled for the metrics and webhook servers")
+	flag.StringVar(&configMap, "configmap", "lm-eval-service", "The configmap that stores settings for the controller")
+	flag.StringVar(&namespace, "namespace", "fms-lm-eval-service-system", "The namespace where the controller is running")
 	opts := zap.Options{
 		Development: true,
 	}
@@ -124,8 +128,11 @@ func main() {
 	}
 
 	if err = (&controller.EvalJobReconciler{
-		Client: mgr.GetClient(),
-		Scheme: mgr.GetScheme(),
+		ConfigMap: configMap,
+		Namespace: namespace,
+		Client:    mgr.GetClient(),
+		Scheme:    mgr.GetScheme(),
+		Recorder:  mgr.GetEventRecorderFor("lm-eval-service-controller"),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "EvalJob")
 		os.Exit(1)

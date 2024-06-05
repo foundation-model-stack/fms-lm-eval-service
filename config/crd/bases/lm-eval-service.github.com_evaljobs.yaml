@@ -92,6 +92,10 @@ spec:
           status:
             description: EvalJobStatus defines the observed state of EvalJob
             properties:
+              completeTime:
+                description: Information when the job's state changes to Complete.
+                format: date-time
+                type: string
               lastScheduleTime:
                 description: Information when was the last time the job was successfully
                   scheduled.
@@ -103,17 +107,21 @@ spec:
               podName:
                 description: The name of the Pod that runs the evaluation job
                 type: string
-              result:
+              reason:
                 description: Final result of the job
                 enum:
-                - NoResult
+                - NoReason
                 - Succeeded
                 - Failed
                 - Cancelled
                 type: string
+              results:
+                description: Evaluation results
+                type: string
               state:
-                description: Status of the job
+                description: State of the job
                 enum:
+                - New
                 - Scheduled
                 - Running
                 - Complete
