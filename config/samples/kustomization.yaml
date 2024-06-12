@@ -1,0 +1,4 @@
+## Append samples of your project ##
+resources:
+- lm-eval-service_v1beta1_evaljob.yaml
+# +kubebuilder:scaffold:manifestskustomizesamples

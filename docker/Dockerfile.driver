@@ -1,0 +1,17 @@
+FROM golang:1.22.4-alpine as builder
+
+WORKDIR /go/src/github.com/foundation-model-stack/fms-ls-eval-service
+COPY . .
+
+RUN GO111MODULE=on CGO_ENABLED=0 GOOS=linux go build -tags netgo -ldflags '-extldflags "-static"' -o /bin/driver ./cmd/driver/*.go
+
+FROM alpine:3.20
+
+RUN adduser -S appuser
+USER appuser
+
+WORKDIR /bin
+
+COPY --from=builder /bin/driver /bin/driver
+
+ENTRYPOINT [ "/bin/driver" ]
