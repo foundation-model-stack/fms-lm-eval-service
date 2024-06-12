@@ -1,0 +1,8 @@
+apiVersion: v1
+data:
+  driver-image: quay.io/yhwang/lm-eval-aas-driver:latest
+  pod-image: quay.io/yhwang/lm-eval-aas-flask:test
+  driver-serviceaccount: driver
+kind: ConfigMap
+metadata:
+  name: configmap

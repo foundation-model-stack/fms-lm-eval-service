@@ -43,12 +43,14 @@ import (
 )
 
 const (
-	DriverPath         = "/bin/driver"
-	DestDriverPath     = "/opt/app-root/src/bin/driver"
-	PodImageKey        = "pod-image"
-	DriverImageKey     = "driver-image"
-	DefaultPodImage    = "quay.io/yhwang/lm-eval-aas-flask:test"
-	DefaultDriverImage = "quay.io/yhwang/lm-eval-aas-driver:test"
+	DriverPath                  = "/bin/driver"
+	DestDriverPath              = "/opt/app-root/src/bin/driver"
+	PodImageKey                 = "pod-image"
+	DriverImageKey              = "driver-image"
+	DriverServiceAccountKey     = "driver-serviceaccount"
+	DefaultPodImage             = "quay.io/yhwang/lm-eval-aas-flask:test"
+	DefaultDriverImage          = "quay.io/yhwang/lm-eval-aas-driver:test"
+	DefaultDriverServiceAccount = "driver"
 )
 
 // EvalJobReconciler reconciles a EvalJob object
@@ -62,15 +64,16 @@ type EvalJobReconciler struct {
 }
 
 type ServiceOptions struct {
-	PodImage    string
-	DriverImage string
+	PodImage             string
+	DriverImage          string
+	DriverServiceAccount string
 }
 
 // +kubebuilder:rbac:groups=lm-eval-service.github.com,resources=evaljobs,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=lm-eval-service.github.com,resources=evaljobs/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=lm-eval-service.github.com,resources=evaljobs/finalizers,verbs=update
 // +kubebuilder:rbac:groups="",resources=pods,verbs=get;list;watch;create;delete
-// +kubebuilder:rbac:groups="",resources=configmaps,verbs=get;watch
+// +kubebuilder:rbac:groups="",resources=configmaps,verbs=get;watch;list
 
 func (r *EvalJobReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	log := log.FromContext(ctx)
@@ -127,6 +130,11 @@ func (r *EvalJobReconciler) SetupWithManager(mgr ctrl.Manager) error {
 			types.NamespacedName{Namespace: r.Namespace, Name: r.ConfigMap},
 			&cm); err != nil {
 
+			ctrl.Log.WithName("setup").Error(err,
+				"failed to get configmap",
+				"namespace", r.Namespace,
+				"name", r.ConfigMap)
+
 			return err
 		}
 
@@ -140,6 +148,7 @@ func (r *EvalJobReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		// since we register the finalizer, no need to monitor deletion events
 		For(&lmevalservicev1beta1.EvalJob{}, builder.WithPredicates(predicate.Funcs{
+			// drop deletion events
 			DeleteFunc: func(event.DeleteEvent) bool {
 				return false
 			},
@@ -151,9 +160,6 @@ func (r *EvalJobReconciler) SetupWithManager(mgr ctrl.Manager) error {
 				// drop all events except deletion
 				CreateFunc: func(event.CreateEvent) bool {
 					return false
-				},
-				DeleteFunc: func(event.DeleteEvent) bool {
-					return true
 				},
 				UpdateFunc: func(event.UpdateEvent) bool {
 					return false
@@ -169,11 +175,15 @@ func (r *EvalJobReconciler) SetupWithManager(mgr ctrl.Manager) error {
 func (r *EvalJobReconciler) constructOptionsFromConfigMap(configmap *corev1.ConfigMap) error {
 	r.options.DriverImage = DefaultDriverImage
 	r.options.PodImage = DefaultPodImage
+	r.options.DriverServiceAccount = DefaultDriverServiceAccount
 	if v, found := configmap.Data[DriverImageKey]; found {
 		r.options.DriverImage = v
 	}
 	if v, found := configmap.Data[PodImageKey]; found {
 		r.options.PodImage = v
+	}
+	if v, found := configmap.Data[DriverServiceAccountKey]; found {
+		r.options.DriverServiceAccount = v
 	}
 	return nil
 }
@@ -223,7 +233,7 @@ func (r *EvalJobReconciler) handleNewCR(ctx context.Context, log logr.Logger, jo
 
 	// construct a new pod and create a pod for the job
 	currentTime := v1.Now()
-	pod := createPod(job)
+	pod := r.createPod(job)
 	if err := r.Create(ctx, pod, &client.CreateOptions{}); err != nil {
 		// Failed to create the pod. Mark the status as complete with failed
 		job.Status.State = lmevalservicev1beta1.CompleteJobState
@@ -388,7 +398,7 @@ func (r *EvalJobReconciler) handleCancel(ctx context.Context, log logr.Logger, j
 	return ctrl.Result{}, err
 }
 
-func createPod(job *lmevalservicev1beta1.EvalJob) *corev1.Pod {
+func (r *EvalJobReconciler) createPod(job *lmevalservicev1beta1.EvalJob) *corev1.Pod {
 	var allowPrivilegeEscalation = false
 	var runAsNonRootUser = true
 	var ownerRefController = true
@@ -420,7 +430,7 @@ func createPod(job *lmevalservicev1beta1.EvalJob) *corev1.Pod {
 			InitContainers: []corev1.Container{
 				{
 					Name:            "driver",
-					Image:           "quay.io/yhwang/lm-eval-aas-driver:test",
+					Image:           r.options.DriverImage,
 					ImagePullPolicy: corev1.PullAlways,
 					Command:         []string{DriverPath, "--copy", DestDriverPath},
 					SecurityContext: &corev1.SecurityContext{
@@ -443,7 +453,7 @@ func createPod(job *lmevalservicev1beta1.EvalJob) *corev1.Pod {
 			Containers: []corev1.Container{
 				{
 					Name:            "main",
-					Image:           "quay.io/yhwang/lm-eval-aas-flask:test",
+					Image:           r.options.PodImage,
 					ImagePullPolicy: corev1.PullAlways,
 					Env: []corev1.EnvVar{
 						{
@@ -483,7 +493,7 @@ func createPod(job *lmevalservicev1beta1.EvalJob) *corev1.Pod {
 					Type: corev1.SeccompProfileTypeRuntimeDefault,
 				},
 			},
-			ServiceAccountName: "driver",
+			ServiceAccountName: r.options.DriverServiceAccount,
 			Volumes: []corev1.Volume{
 				{
 					Name: "shared", VolumeSource: corev1.VolumeSource{

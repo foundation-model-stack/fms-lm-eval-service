@@ -70,7 +70,7 @@ func main() {
 	flag.BoolVar(&enableHTTP2, "enable-http2", false,
 		"If set, HTTP/2 will be enabled for the metrics and webhook servers")
 	flag.StringVar(&configMap, "configmap", "lm-eval-service", "The configmap that stores settings for the controller")
-	flag.StringVar(&namespace, "namespace", "fms-lm-eval-service-system", "The namespace where the controller is running")
+	flag.StringVar(&namespace, "namespace", "lm-eval-aas", "The namespace where the controller is running")
 	opts := zap.Options{
 		Development: true,
 	}

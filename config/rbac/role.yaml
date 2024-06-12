@@ -10,6 +10,7 @@ rules:
   - configmaps
   verbs:
   - get
+  - list
   - watch
 - apiGroups:
   - ""

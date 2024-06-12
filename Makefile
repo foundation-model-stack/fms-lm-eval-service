@@ -1,7 +1,12 @@
 # Image URL to use all building/pushing image targets
-IMG ?= controller:latest
+IMG ?= quay.io/yhwang/lm-eval-aas-controller:latest
+IMG_DRIVER ?= quay.io/yhwang/lm-eval-aas-driver:latest
 # ENVTEST_K8S_VERSION refers to the version of kubebuilder assets to be downloaded by envtest binary.
 ENVTEST_K8S_VERSION = 1.25.0
+
+DOCKER_FILE ?= docker/Dockerfile.controller
+
+DOCKER_FILE_DRIVER ?= docker/Dockerfile.driver
 
 # Get the currently used golang install path (in GOPATH/bin, unless GOBIN is set)
 ifeq (,$(shell go env GOBIN))
@@ -92,11 +97,19 @@ run: manifests generate fmt vet ## Run a controller from your host.
 # More info: https://docs.docker.com/develop/develop-images/build_enhancements/
 .PHONY: docker-build
 docker-build: ## Build docker image with the manager.
-	$(CONTAINER_TOOL) build -t ${IMG} .
+	$(CONTAINER_TOOL) build -t ${IMG} -f $(DOCKER_FILE) .
+
+.PHONY: docker-build-driver
+docker-build-driver: ## Build docker image with the manager.
+	$(CONTAINER_TOOL) build -t ${IMG_DRIVER} -f $(DOCKER_FILE_DRIVER) .
 
 .PHONY: docker-push
 docker-push: ## Push docker image with the manager.
 	$(CONTAINER_TOOL) push ${IMG}
+
+.PHONY: docker-push-driver
+docker-push-driver: ## Push docker image with the manager.
+	$(CONTAINER_TOOL) push ${IMG_DRIVER}
 
 # PLATFORMS defines the target platforms for the manager image be built to provide support to multiple
 # architectures. (i.e. make docker-buildx IMG=myregistry/mypoperator:0.0.1). To use this option you need to:
