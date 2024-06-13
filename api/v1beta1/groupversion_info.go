@@ -14,9 +14,9 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-// Package v1beta1 contains API Schema definitions for the lm-eval-service v1beta1 API group
+// Package v1beta1 contains API Schema definitions for the foundation-model-stack.github.com.github.com v1beta1 API group
 // +kubebuilder:object:generate=true
-// +groupName=lm-eval-service.github.com
+// +groupName=foundation-model-stack.github.com.github.com
 package v1beta1
 
 import (
@@ -25,15 +25,15 @@ import (
 )
 
 const (
-	GroupName     = "lm-eval-service.github.com"
+	GroupName     = "foundation-model-stack.github.com.github.com"
 	Version       = "v1beta1"
-	KindName      = "EvalJob"
-	FinalizerName = "lm-eval-service.github.com/finalizer"
+	KindName      = "LMEvalJob"
+	FinalizerName = "lm-eval-job.foundation-model-stack.github.com.github.com/finalizer"
 )
 
 var (
 	// GroupVersion is group version used to register these objects
-	GroupVersion = schema.GroupVersion{Group: "lm-eval-service.github.com", Version: "v1beta1"}
+	GroupVersion = schema.GroupVersion{Group: GroupName, Version: Version}
 
 	// SchemeBuilder is used to add go types to the GroupVersionKind scheme
 	SchemeBuilder = &scheme.Builder{GroupVersion: GroupVersion}

@@ -4,4 +4,4 @@ kind: CustomResourceDefinition
 metadata:
   annotations:
     cert-manager.io/inject-ca-from: CERTIFICATE_NAMESPACE/CERTIFICATE_NAME
-  name: evaljobs.lm-eval-service.github.com
+  name: lmevaljobs.foundation-model-stack.github.com.github.com

@@ -127,7 +127,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	if err = (&controller.EvalJobReconciler{
+	if err = (&controller.LMEvalJobReconciler{
 		ConfigMap: configMap,
 		Namespace: namespace,
 		Client:    mgr.GetClient(),
@@ -138,7 +138,7 @@ func main() {
 		os.Exit(1)
 	}
 	if os.Getenv("ENABLE_WEBHOOKS") != "false" {
-		if err = (&lmevalservicev1beta1.EvalJob{}).SetupWebhookWithManager(mgr); err != nil {
+		if err = (&lmevalservicev1beta1.LMEvalJob{}).SetupWebhookWithManager(mgr); err != nil {
 			setupLog.Error(err, "unable to create webhook", "webhook", "EvalJob")
 			os.Exit(1)
 		}

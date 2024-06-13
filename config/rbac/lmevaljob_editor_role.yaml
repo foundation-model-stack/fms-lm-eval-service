@@ -1,23 +1,27 @@
-# permissions for end users to view evaljobs.
+# permissions for end users to edit lmevaljobs.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
   labels:
     app.kubernetes.io/name: fms-lm-eval-service
     app.kubernetes.io/managed-by: kustomize
-  name: evaljob-viewer-role
+  name: lmevaljob-editor-role
 rules:
 - apiGroups:
-  - lm-eval-service.github.com
+  - foundation-model-stack.github.com.github.com
   resources:
-  - evaljobs
+  - lmevaljobs
   verbs:
+  - create
+  - delete
   - get
   - list
+  - patch
+  - update
   - watch
 - apiGroups:
-  - lm-eval-service.github.com
+  - foundation-model-stack.github.com.github.com
   resources:
-  - evaljobs/status
+  - lmevaljobs/status
   verbs:
   - get

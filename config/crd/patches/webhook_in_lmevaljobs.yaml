@@ -2,7 +2,7 @@
 apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
-  name: evaljobs.lm-eval-service.github.com
+  name: lmevaljobs.foundation-model-stack.github.com.github.com
 spec:
   conversion:
     strategy: Webhook

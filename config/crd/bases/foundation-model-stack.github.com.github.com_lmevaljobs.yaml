@@ -4,20 +4,20 @@ kind: CustomResourceDefinition
 metadata:
   annotations:
     controller-gen.kubebuilder.io/version: v0.15.0
-  name: evaljobs.lm-eval-service.github.com
+  name: lmevaljobs.foundation-model-stack.github.com.github.com
 spec:
-  group: lm-eval-service.github.com
+  group: foundation-model-stack.github.com.github.com
   names:
-    kind: EvalJob
-    listKind: EvalJobList
-    plural: evaljobs
-    singular: evaljob
+    kind: LMEvalJob
+    listKind: LMEvalJobList
+    plural: lmevaljobs
+    singular: lmevaljob
   scope: Namespaced
   versions:
   - name: v1beta1
     schema:
       openAPIV3Schema:
-        description: EvalJob is the Schema for the evaljobs API
+        description: LMEvalJob is the Schema for the lmevaljobs API
         properties:
           apiVersion:
             description: |-
@@ -37,7 +37,7 @@ spec:
           metadata:
             type: object
           spec:
-            description: EvalJobSpec defines the desired state of EvalJob
+            description: LMEvalJobSpec defines the desired state of LMEvalJob
             properties:
               genArgs:
                 description: Map to `--gen_kwargs` parameter for the underlying library.
@@ -90,7 +90,7 @@ spec:
             - tasks
             type: object
           status:
-            description: EvalJobStatus defines the observed state of EvalJob
+            description: LMEvalJobStatus defines the observed state of LMEvalJob
             properties:
               completeTime:
                 description: Information when the job's state changes to Complete.

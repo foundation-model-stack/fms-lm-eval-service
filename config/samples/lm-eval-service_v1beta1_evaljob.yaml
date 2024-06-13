@@ -1,5 +1,5 @@
-apiVersion: lm-eval-service.github.com/v1beta1
-kind: EvalJob
+apiVersion: foundation-model-stack.github.com.github.com/v1beta1
+kind: LMEvalJob
 metadata:
   labels:
     app.kubernetes.io/name: fms-lm-eval-service
