@@ -19,9 +19,9 @@ rules:
   - list
   - watch
 - apiGroups:
-  - lm-eval-service.github.com
+  - foundation-model-stack.github.com.github.com
   resources:
-  - evaljobs
+  - lmevaljobs
   verbs:
   - get
   - list
@@ -29,9 +29,9 @@ rules:
   - update
   - watch
 - apiGroups:
-  - lm-eval-service.github.com
+  - foundation-model-stack.github.com.github.com
   resources:
-  - evaljobs/status
+  - lmevaljobs/status
   verbs:
   - get
   - patch

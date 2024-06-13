@@ -33,66 +33,62 @@ import (
 var evaljoblog = logf.Log.WithName("evaljob-resource")
 
 // SetupWebhookWithManager will setup the manager to manage the webhooks
-func (r *EvalJob) SetupWebhookWithManager(mgr ctrl.Manager) error {
+func (r *LMEvalJob) SetupWebhookWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewWebhookManagedBy(mgr).
 		For(r).
 		Complete()
 }
 
-// TODO(user): EDIT THIS FILE!  THIS IS SCAFFOLDING FOR YOU TO OWN!
+// +kubebuilder:webhook:path=/mutate-foundation-model-stack-github-com-github-com-v1beta1-lmevaljob,mutating=true,failurePolicy=fail,sideEffects=None,groups=foundation-model-stack.github.com.github.com,resources=lmevaljobs,verbs=create;update,versions=v1beta1,name=mlmevaljob.kb.io,admissionReviewVersions=v1
 
-// +kubebuilder:webhook:path=/mutate-lm-eval-service-github-com-v1beta1-evaljob,mutating=true,failurePolicy=fail,sideEffects=None,groups=lm-eval-service.github.com,resources=evaljobs,verbs=create;update,versions=v1beta1,name=mevaljob.kb.io,admissionReviewVersions=v1
-
-var _ webhook.Defaulter = &EvalJob{}
+var _ webhook.Defaulter = &LMEvalJob{}
 
 // Default implements webhook.Defaulter so a webhook will be registered for the type
-func (r *EvalJob) Default() {
+func (r *LMEvalJob) Default() {
 	evaljoblog.Info("default", "name", r.Name)
-
-	// TODO(user): fill in your defaulting logic.
 }
 
-// TODO(user): change verbs to "verbs=create;update;delete" if you want to enable deletion validation.
 // NOTE: The 'path' attribute must follow a specific pattern and should not be modified directly here.
 // Modifying the path for an invalid path can cause API server errors; failing to locate the webhook.
-// +kubebuilder:webhook:path=/validate-lm-eval-service-github-com-v1beta1-evaljob,mutating=false,failurePolicy=fail,sideEffects=None,groups=lm-eval-service.github.com,resources=evaljobs,verbs=create;update,versions=v1beta1,name=vevaljob.kb.io,admissionReviewVersions=v1
+// +kubebuilder:webhook:path=/validate-foundation-model-stack-github-com-github-com-v1beta1-lmevaljob,mutating=false,failurePolicy=fail,sideEffects=None,groups=foundation-model-stack.github.com.github.com,resources=lmevaljobs,verbs=create;update,versions=v1beta1,name=vlmevaljob.kb.io,admissionReviewVersions=v1
 
-var _ webhook.Validator = &EvalJob{}
+var _ webhook.Validator = &LMEvalJob{}
 
 // ValidateCreate implements webhook.Validator so a webhook will be registered for the type
-func (r *EvalJob) ValidateCreate() (admission.Warnings, error) {
+func (r *LMEvalJob) ValidateCreate() (admission.Warnings, error) {
 	evaljoblog.Info("validate create", "name", r.Name)
 
-	// TODO(user): fill in your validation logic upon object creation.
-	return nil, nil
+	return nil, r.ValidateJob()
 }
 
 // ValidateUpdate implements webhook.Validator so a webhook will be registered for the type
-func (r *EvalJob) ValidateUpdate(old runtime.Object) (admission.Warnings, error) {
+func (r *LMEvalJob) ValidateUpdate(old runtime.Object) (admission.Warnings, error) {
 	evaljoblog.Info("validate update", "name", r.Name)
 
-	// TODO(user): fill in your validation logic upon object update.
-	return nil, nil
+	return nil, r.ValidateJob()
 }
 
 // ValidateDelete implements webhook.Validator so a webhook will be registered for the type
-func (r *EvalJob) ValidateDelete() (admission.Warnings, error) {
+func (r *LMEvalJob) ValidateDelete() (admission.Warnings, error) {
 	evaljoblog.Info("validate delete", "name", r.Name)
 
-	// TODO(user): fill in your validation logic upon object deletion.
 	return nil, nil
 }
 
-func (r *EvalJob) ValidateJob() error {
+func (r *LMEvalJob) ValidateJob() error {
 	var allErrs field.ErrorList
 	if err := r.ValidateLimit(); err != nil {
 		allErrs = append(allErrs, err)
+	}
+
+	if len(allErrs) == 0 {
+		return nil
 	}
 	return apierrors.NewInvalid(
 		schema.GroupKind{Group: GroupName, Kind: KindName}, r.Name, allErrs)
 }
 
-func (r *EvalJob) ValidateLimit() *field.Error {
+func (r *LMEvalJob) ValidateLimit() *field.Error {
 	if r.Spec.Limit == "" {
 		return nil
 	}

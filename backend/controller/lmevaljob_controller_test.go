@@ -30,7 +30,7 @@ import (
 	lmevalservicev1beta1 "github.com/foundation-model-stack/fms-lm-eval-service/api/v1beta1"
 )
 
-var _ = Describe("EvalJob Controller", func() {
+var _ = Describe("LMEvalJob Controller", func() {
 	Context("When reconciling a resource", func() {
 		const resourceName = "test-resource"
 
@@ -38,20 +38,20 @@ var _ = Describe("EvalJob Controller", func() {
 
 		typeNamespacedName := types.NamespacedName{
 			Name:      resourceName,
-			Namespace: "default", // TODO(user):Modify as needed
+			Namespace: "default",
 		}
-		evaljob := &lmevalservicev1beta1.EvalJob{}
+		evaljob := &lmevalservicev1beta1.LMEvalJob{}
 
 		BeforeEach(func() {
-			By("creating the custom resource for the Kind EvalJob")
+			By("creating the custom resource for the Kind LMEvalJob")
 			err := k8sClient.Get(ctx, typeNamespacedName, evaljob)
 			if err != nil && errors.IsNotFound(err) {
-				resource := &lmevalservicev1beta1.EvalJob{
+				resource := &lmevalservicev1beta1.LMEvalJob{
 					ObjectMeta: metav1.ObjectMeta{
 						Name:      resourceName,
 						Namespace: "default",
 					},
-					Spec: lmevalservicev1beta1.EvalJobSpec{
+					Spec: lmevalservicev1beta1.LMEvalJobSpec{
 						Model: "test",
 						ModelArgs: []lmevalservicev1beta1.Arg{
 							{Name: "arg1", Value: "value1"},
@@ -64,17 +64,16 @@ var _ = Describe("EvalJob Controller", func() {
 		})
 
 		AfterEach(func() {
-			// TODO(user): Cleanup logic after each test, like removing the resource instance.
-			resource := &lmevalservicev1beta1.EvalJob{}
+			resource := &lmevalservicev1beta1.LMEvalJob{}
 			err := k8sClient.Get(ctx, typeNamespacedName, resource)
 			Expect(err).NotTo(HaveOccurred())
 
-			By("Cleanup the specific resource instance EvalJob")
+			By("Cleanup the specific resource instance LMEvalJob")
 			Expect(k8sClient.Delete(ctx, resource)).To(Succeed())
 		})
 		It("should successfully reconcile the resource", func() {
 			By("Reconciling the created resource")
-			controllerReconciler := &EvalJobReconciler{
+			controllerReconciler := &LMEvalJobReconciler{
 				Client: k8sClient,
 				Scheme: k8sClient.Scheme(),
 			}
@@ -83,8 +82,6 @@ var _ = Describe("EvalJob Controller", func() {
 				NamespacedName: typeNamespacedName,
 			})
 			Expect(err).NotTo(HaveOccurred())
-			// TODO(user): Add more specific assertions depending on your controller's reconciliation logic.
-			// Example: If you expect a certain status condition after reconciliation, verify it here.
 		})
 	})
 })

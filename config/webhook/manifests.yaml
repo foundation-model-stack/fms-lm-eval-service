@@ -10,19 +10,19 @@ webhooks:
     service:
       name: webhook-service
       namespace: system
-      path: /mutate-lm-eval-service-github-com-v1beta1-evaljob
+      path: /mutate-foundation-model-stack-github-com-github-com-v1beta1-lmevaljob
   failurePolicy: Fail
-  name: mevaljob.kb.io
+  name: mlmevaljob.kb.io
   rules:
   - apiGroups:
-    - lm-eval-service.github.com
+    - foundation-model-stack.github.com.github.com
     apiVersions:
     - v1beta1
     operations:
     - CREATE
     - UPDATE
     resources:
-    - evaljobs
+    - lmevaljobs
   sideEffects: None
 ---
 apiVersion: admissionregistration.k8s.io/v1
@@ -36,17 +36,17 @@ webhooks:
     service:
       name: webhook-service
       namespace: system
-      path: /validate-lm-eval-service-github-com-v1beta1-evaljob
+      path: /validate-foundation-model-stack-github-com-github-com-v1beta1-lmevaljob
   failurePolicy: Fail
-  name: vevaljob.kb.io
+  name: vlmevaljob.kb.io
   rules:
   - apiGroups:
-    - lm-eval-service.github.com
+    - foundation-model-stack.github.com.github.com
     apiVersions:
     - v1beta1
     operations:
     - CREATE
     - UPDATE
     resources:
-    - evaljobs
+    - lmevaljobs
   sideEffects: None

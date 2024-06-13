@@ -59,8 +59,8 @@ type Arg struct {
 	Value string `json:"value,omitempty"`
 }
 
-// EvalJobSpec defines the desired state of EvalJob
-type EvalJobSpec struct {
+// LMEvalJobSpec defines the desired state of LMEvalJob
+type LMEvalJobSpec struct {
 	// INSERT ADDITIONAL SPEC FIELDS - desired state of cluster
 	// Important: Run "make" to regenerate code after modifying this file
 
@@ -88,8 +88,8 @@ type EvalJobSpec struct {
 	LogSamples *bool `json:"logSamples,omitempty"`
 }
 
-// EvalJobStatus defines the observed state of EvalJob
-type EvalJobStatus struct {
+// LMEvalJobStatus defines the observed state of LMEvalJob
+type LMEvalJobStatus struct {
 	// Important: Run "make" to regenerate code after modifying this file
 
 	// The name of the Pod that runs the evaluation job
@@ -118,24 +118,24 @@ type EvalJobStatus struct {
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
 
-// EvalJob is the Schema for the evaljobs API
-type EvalJob struct {
+// LMEvalJob is the Schema for the lmevaljobs API
+type LMEvalJob struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`
 
-	Spec   EvalJobSpec   `json:"spec,omitempty"`
-	Status EvalJobStatus `json:"status,omitempty"`
+	Spec   LMEvalJobSpec   `json:"spec,omitempty"`
+	Status LMEvalJobStatus `json:"status,omitempty"`
 }
 
 // +kubebuilder:object:root=true
 
-// EvalJobList contains a list of EvalJob
-type EvalJobList struct {
+// LMEvalJobList contains a list of LMEvalJob
+type LMEvalJobList struct {
 	metav1.TypeMeta `json:",inline"`
 	metav1.ListMeta `json:"metadata,omitempty"`
-	Items           []EvalJob `json:"items"`
+	Items           []LMEvalJob `json:"items"`
 }
 
 func init() {
-	SchemeBuilder.Register(&EvalJob{}, &EvalJobList{})
+	SchemeBuilder.Register(&LMEvalJob{}, &LMEvalJobList{})
 }

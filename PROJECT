@@ -13,8 +13,8 @@ resources:
     namespaced: true
   controller: true
   domain: github.com
-  group: lm-eval-service
-  kind: EvalJob
+  group: foundation-model-stack.github.com
+  kind: LMEvalJob
   path: github.com/foundation-model-stack/fms-lm-eval-service/api/v1beta1
   version: v1beta1
   webhooks:

@@ -19,6 +19,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -48,13 +49,25 @@ const (
 	PodImageKey                 = "pod-image"
 	DriverImageKey              = "driver-image"
 	DriverServiceAccountKey     = "driver-serviceaccount"
+	PodCheckingIntervalKey      = "pod-checking-interval"
+	ImagePullPolicyKey          = "image-pull-policy"
 	DefaultPodImage             = "quay.io/yhwang/lm-eval-aas-flask:test"
 	DefaultDriverImage          = "quay.io/yhwang/lm-eval-aas-driver:test"
 	DefaultDriverServiceAccount = "driver"
+	DefaultPodCheckingInterval  = time.Second * 10
+	DefaultImagePullPolicy      = corev1.PullAlways
 )
 
-// EvalJobReconciler reconciles a EvalJob object
-type EvalJobReconciler struct {
+var (
+	pullPolicyMap = map[corev1.PullPolicy]corev1.PullPolicy{
+		corev1.PullAlways:       corev1.PullAlways,
+		corev1.PullNever:        corev1.PullNever,
+		corev1.PullIfNotPresent: corev1.PullIfNotPresent,
+	}
+)
+
+// LMEvalJobReconciler reconciles a LMEvalJob object
+type LMEvalJobReconciler struct {
 	client.Client
 	Scheme    *runtime.Scheme
 	Recorder  record.EventRecorder
@@ -67,63 +80,62 @@ type ServiceOptions struct {
 	PodImage             string
 	DriverImage          string
 	DriverServiceAccount string
+	PodCheckingInterval  time.Duration
+	ImagePullPolicy      corev1.PullPolicy
 }
 
-// +kubebuilder:rbac:groups=lm-eval-service.github.com,resources=evaljobs,verbs=get;list;watch;create;update;patch;delete
-// +kubebuilder:rbac:groups=lm-eval-service.github.com,resources=evaljobs/status,verbs=get;update;patch
-// +kubebuilder:rbac:groups=lm-eval-service.github.com,resources=evaljobs/finalizers,verbs=update
+// +kubebuilder:rbac:groups=foundation-model-stack.github.com.github.com,resources=lmevaljobs,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=foundation-model-stack.github.com.github.com,resources=lmevaljobs/status,verbs=get;update;patch
+// +kubebuilder:rbac:groups=foundation-model-stack.github.com.github.com,resources=lmevaljobs/finalizers,verbs=update
 // +kubebuilder:rbac:groups="",resources=pods,verbs=get;list;watch;create;delete
 // +kubebuilder:rbac:groups="",resources=configmaps,verbs=get;watch;list
 
-func (r *EvalJobReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
+func (r *LMEvalJobReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	log := log.FromContext(ctx)
 
-	evalJob := &lmevalservicev1beta1.EvalJob{}
-	if err := r.Get(ctx, req.NamespacedName, evalJob); err != nil {
-		log.Error(err, "unable to fetch EvalJob. could be from an deletion request")
-		// we'll ignore not-found errors, since they can't be fixed by an immediate
-		// requeue (we'll need to wait for a new notification), and we can get them
-		// on deleted requests.
+	job := &lmevalservicev1beta1.LMEvalJob{}
+	if err := r.Get(ctx, req.NamespacedName, job); err != nil {
+		log.Info("unable to fetch LMEvalJob. could be from a deletion request")
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
 
-	if !evalJob.ObjectMeta.DeletionTimestamp.IsZero() {
+	if !job.ObjectMeta.DeletionTimestamp.IsZero() {
 		// Handle deletion here
-		return r.handleDeletion(ctx, evalJob, log)
+		return r.handleDeletion(ctx, job, log)
 	}
 
 	// Treat this as NewJobState
-	if evalJob.Status.LastScheduleTime == nil {
-		evalJob.Status.State = lmevalservicev1beta1.NewJobState
+	if job.Status.LastScheduleTime == nil {
+		job.Status.State = lmevalservicev1beta1.NewJobState
 	}
 
 	// Handle the job based on its state
-	switch evalJob.Status.State {
+	switch job.Status.State {
 	case lmevalservicev1beta1.NewJobState:
 		// Handle newly created job
-		return r.handleNewCR(ctx, log, evalJob)
+		return r.handleNewCR(ctx, log, job)
 	case lmevalservicev1beta1.ScheduledJobState:
 		// the job's pod has been created and the driver hasn't updated the state yet
 		// let's check the pod status and detect pod failure if there is
 		// TODO: need a timeout/retry mechanism here to transite to other states
-		return r.checkScheduledPod(ctx, log, evalJob)
+		return r.checkScheduledPod(ctx, log, job)
 	case lmevalservicev1beta1.RunningJobState:
 		// TODO: need a timeout/retry mechanism here to transite to other states
-		return r.checkScheduledPod(ctx, log, evalJob)
+		return r.checkScheduledPod(ctx, log, job)
 	case lmevalservicev1beta1.CompleteJobState:
-		return r.handleComplete(ctx, log, evalJob)
+		return r.handleComplete(ctx, log, job)
 	case lmevalservicev1beta1.CancelledJobState:
-		return r.handleCancel(ctx, log, evalJob)
+		return r.handleCancel(ctx, log, job)
 	}
 
 	return ctrl.Result{}, nil
 }
 
 // SetupWithManager sets up the controller with the Manager.
-func (r *EvalJobReconciler) SetupWithManager(mgr ctrl.Manager) error {
+func (r *LMEvalJobReconciler) SetupWithManager(mgr ctrl.Manager) error {
 
 	// Add a runnable to retrieve the settings from the specified configmap
-	mgr.Add(manager.RunnableFunc(func(context.Context) error {
+	if err := mgr.Add(manager.RunnableFunc(func(context.Context) error {
 		var cm corev1.ConfigMap
 		if err := r.Get(
 			context.Background(),
@@ -142,12 +154,14 @@ func (r *EvalJobReconciler) SetupWithManager(mgr ctrl.Manager) error {
 			return err
 		}
 		return nil
-	}))
+	})); err != nil {
+		return err
+	}
 
 	// watch the pods created by the controller but only for the deletion event
 	return ctrl.NewControllerManagedBy(mgr).
 		// since we register the finalizer, no need to monitor deletion events
-		For(&lmevalservicev1beta1.EvalJob{}, builder.WithPredicates(predicate.Funcs{
+		For(&lmevalservicev1beta1.LMEvalJob{}, builder.WithPredicates(predicate.Funcs{
 			// drop deletion events
 			DeleteFunc: func(event.DeleteEvent) bool {
 				return false
@@ -155,7 +169,7 @@ func (r *EvalJobReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		})).
 		Watches(
 			&corev1.Pod{},
-			handler.EnqueueRequestForOwner(mgr.GetScheme(), mgr.GetRESTMapper(), &lmevalservicev1beta1.EvalJob{}),
+			handler.EnqueueRequestForOwner(mgr.GetScheme(), mgr.GetRESTMapper(), &lmevalservicev1beta1.LMEvalJob{}),
 			builder.WithPredicates(predicate.Funcs{
 				// drop all events except deletion
 				CreateFunc: func(event.CreateEvent) bool {
@@ -172,10 +186,14 @@ func (r *EvalJobReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Complete(r)
 }
 
-func (r *EvalJobReconciler) constructOptionsFromConfigMap(configmap *corev1.ConfigMap) error {
+func (r *LMEvalJobReconciler) constructOptionsFromConfigMap(configmap *corev1.ConfigMap) error {
 	r.options.DriverImage = DefaultDriverImage
 	r.options.PodImage = DefaultPodImage
 	r.options.DriverServiceAccount = DefaultDriverServiceAccount
+	r.options.PodCheckingInterval = DefaultPodCheckingInterval
+	r.options.ImagePullPolicy = DefaultImagePullPolicy
+	log := log.FromContext(context.Background())
+
 	if v, found := configmap.Data[DriverImageKey]; found {
 		r.options.DriverImage = v
 	}
@@ -185,17 +203,34 @@ func (r *EvalJobReconciler) constructOptionsFromConfigMap(configmap *corev1.Conf
 	if v, found := configmap.Data[DriverServiceAccountKey]; found {
 		r.options.DriverServiceAccount = v
 	}
+	if v, found := configmap.Data[PodCheckingIntervalKey]; found {
+		if d, err := time.ParseDuration(v); err == nil {
+			r.options.PodCheckingInterval = d
+		} else {
+			log.Error(err, "failed to parse the configmap", PodCheckingIntervalKey, v)
+		}
+	}
+	if v, found := configmap.Data[ImagePullPolicyKey]; found {
+		if p, found := pullPolicyMap[corev1.PullPolicy(v)]; found {
+			r.options.ImagePullPolicy = p
+		} else {
+			log.Error(
+				fmt.Errorf("invalid %s value in the configmap: %s", ImagePullPolicyKey, v),
+				"use the default value for the ImagePullPolicy instead",
+			)
+		}
+	}
 	return nil
 }
 
-func (r *EvalJobReconciler) handleDeletion(ctx context.Context, job *lmevalservicev1beta1.EvalJob, log logr.Logger) (reconcile.Result, error) {
+func (r *LMEvalJobReconciler) handleDeletion(ctx context.Context, job *lmevalservicev1beta1.LMEvalJob, log logr.Logger) (reconcile.Result, error) {
 	if controllerutil.ContainsFinalizer(job, lmevalservicev1beta1.FinalizerName) {
 		// delete the correspondling pod if needed
 		// remove our finalizer from the list and update it.
 		if job.Status.State != lmevalservicev1beta1.CompleteJobState ||
 			job.Status.Reason != lmevalservicev1beta1.CancelledReason {
 
-			if err := r.deleteJobPod(ctx, job); err != nil {
+			if err := r.deleteJobPod(ctx, job); err != nil && client.IgnoreNotFound(err) != nil {
 				log.Error(err, "failed to delete pod of the job")
 			}
 		}
@@ -205,7 +240,7 @@ func (r *EvalJobReconciler) handleDeletion(ctx context.Context, job *lmevalservi
 			return ctrl.Result{}, err
 		}
 		r.Recorder.Event(job, "Normal", "DetachFinalizer",
-			fmt.Sprintf("removed finalizer from EvalJob %s in namespace %s",
+			fmt.Sprintf("removed finalizer from LMEvalJob %s in namespace %s",
 				job.Name,
 				job.Namespace))
 		log.Info("Successfully remove the finalizer", "name", job.Name)
@@ -214,7 +249,7 @@ func (r *EvalJobReconciler) handleDeletion(ctx context.Context, job *lmevalservi
 	return ctrl.Result{}, nil
 }
 
-func (r *EvalJobReconciler) handleNewCR(ctx context.Context, log logr.Logger, job *lmevalservicev1beta1.EvalJob) (reconcile.Result, error) {
+func (r *LMEvalJobReconciler) handleNewCR(ctx context.Context, log logr.Logger, job *lmevalservicev1beta1.LMEvalJob) (reconcile.Result, error) {
 	// If it doesn't contain our finalizer, add it
 	if !controllerutil.ContainsFinalizer(job, lmevalservicev1beta1.FinalizerName) {
 		controllerutil.AddFinalizer(job, lmevalservicev1beta1.FinalizerName)
@@ -223,10 +258,10 @@ func (r *EvalJobReconciler) handleNewCR(ctx context.Context, log logr.Logger, jo
 			return ctrl.Result{}, err
 		}
 		r.Recorder.Event(job, "Normal", "AttachFinalizer",
-			fmt.Sprintf("added the finalizer to the EvalJob %s in namespace %s",
+			fmt.Sprintf("added the finalizer to the LMEvalJob %s in namespace %s",
 				job.Name,
 				job.Namespace))
-		// Since finalizers were updated. Need to fetch the new EvalJob
+		// Since finalizers were updated. Need to fetch the new LMEvalJob
 		// End the current reconsile and get revisioned job in next reconsile
 		return ctrl.Result{}, nil
 	}
@@ -240,9 +275,9 @@ func (r *EvalJobReconciler) handleNewCR(ctx context.Context, log logr.Logger, jo
 		job.Status.Reason = lmevalservicev1beta1.FailedReason
 		job.Status.Message = err.Error()
 		if err := r.Status().Update(ctx, job); err != nil {
-			log.Error(err, "unable to update EvalJob status for pod creation failure")
+			log.Error(err, "unable to update LMEvalJob status for pod creation failure")
 		}
-		log.Error(err, "Failed to create pod for the EvalJob", "name", job.Name)
+		log.Error(err, "Failed to create pod for the LMEvalJob", "name", job.Name)
 		return ctrl.Result{}, err
 	}
 
@@ -251,19 +286,19 @@ func (r *EvalJobReconciler) handleNewCR(ctx context.Context, log logr.Logger, jo
 	job.Status.PodName = pod.Name
 	job.Status.LastScheduleTime = &currentTime
 	if err := r.Status().Update(ctx, job); err != nil {
-		log.Error(err, "unable to update EvalJob status (pod creation done)")
+		log.Error(err, "unable to update LMEvalJob status (pod creation done)")
 		return ctrl.Result{}, err
 	}
 	r.Recorder.Event(job, "Normal", "PodCreation",
-		fmt.Sprintf("the EvalJob %s in namespace %s created a pod",
+		fmt.Sprintf("the LMEvalJob %s in namespace %s created a pod",
 			job.Name,
 			job.Namespace))
 	log.Info("Successfully create a Pod for the Job")
-	// Check the pod after 10 seconds
-	return ctrl.Result{Requeue: true, RequeueAfter: time.Second * 10}, nil
+	// Check the pod after the config interval
+	return ctrl.Result{Requeue: true, RequeueAfter: r.options.PodCheckingInterval}, nil
 }
 
-func (r *EvalJobReconciler) checkScheduledPod(ctx context.Context, log logr.Logger, job *lmevalservicev1beta1.EvalJob) (ctrl.Result, error) {
+func (r *LMEvalJobReconciler) checkScheduledPod(ctx context.Context, log logr.Logger, job *lmevalservicev1beta1.LMEvalJob) (ctrl.Result, error) {
 	pod, err := r.getPod(ctx, job)
 	if err != nil {
 		// a weird state, someone delete the corresponding pod? mark this as CompleteJobState
@@ -272,11 +307,11 @@ func (r *EvalJobReconciler) checkScheduledPod(ctx context.Context, log logr.Logg
 		job.Status.Reason = lmevalservicev1beta1.FailedReason
 		job.Status.Message = err.Error()
 		if err := r.Status().Update(ctx, job); err != nil {
-			log.Error(err, "unable to update EvalJob status", "state", job.Status.State)
+			log.Error(err, "unable to update LMEvalJob status", "state", job.Status.State)
 			return ctrl.Result{}, err
 		}
 		r.Recorder.Event(job, "Warning", "PodMising",
-			fmt.Sprintf("the pod for the EvalJob %s in namespace %s is gone",
+			fmt.Sprintf("the pod for the LMEvalJob %s in namespace %s is gone",
 				job.Name,
 				job.Namespace))
 		log.Error(err, "since the job's pod is gone, mark the job as complete with error result.")
@@ -285,39 +320,38 @@ func (r *EvalJobReconciler) checkScheduledPod(ctx context.Context, log logr.Logg
 
 	if pod.Status.ContainerStatuses == nil {
 		// wait for the pod to initialize and run the containers
-		return ctrl.Result{Requeue: true, RequeueAfter: time.Second * 10}, nil
+		return ctrl.Result{Requeue: true, RequeueAfter: r.options.PodCheckingInterval}, nil
 	}
 
-	for _, cstatus := range pod.Status.ContainerStatuses {
-		if cstatus.Name == "main" {
-			if cstatus.LastTerminationState.Terminated == nil {
-				return ctrl.Result{Requeue: true, RequeueAfter: time.Second * 10}, nil
-			} else {
-				if cstatus.LastTerminationState.Terminated.ExitCode == 0 {
-					job.Status.State = lmevalservicev1beta1.CompleteJobState
-					job.Status.Reason = lmevalservicev1beta1.SucceedReason
-				} else {
-					job.Status.State = lmevalservicev1beta1.CompleteJobState
-					job.Status.Reason = lmevalservicev1beta1.FailedReason
-					job.Status.Message = cstatus.LastTerminationState.Terminated.Reason
-
-				}
-				if err := r.Status().Update(ctx, job); err != nil {
-					log.Error(err, "unable to update EvalJob status", "state", job.Status.State)
-					return ctrl.Result{}, err
-				}
-				r.Recorder.Event(job, "Normal", "PodCompleted",
-					fmt.Sprintf("The pod for the EvalJob %s in namespace %s has completed",
-						job.Name,
-						job.Namespace))
-				return ctrl.Result{}, nil
-			}
-		}
+	mainIndex := slices.IndexFunc(pod.Status.ContainerStatuses, func(s corev1.ContainerStatus) bool {
+		return s.Name == "main"
+	})
+	if mainIndex == -1 || pod.Status.ContainerStatuses[mainIndex].LastTerminationState.Terminated == nil {
+		// wait for the main container to finish
+		return ctrl.Result{Requeue: true, RequeueAfter: r.options.PodCheckingInterval}, nil
 	}
-	return ctrl.Result{Requeue: true, RequeueAfter: time.Second * 10}, nil
+
+	// main container finished. update status
+	job.Status.State = lmevalservicev1beta1.CompleteJobState
+	if pod.Status.ContainerStatuses[mainIndex].LastTerminationState.Terminated.ExitCode == 0 {
+		job.Status.Reason = lmevalservicev1beta1.SucceedReason
+	} else {
+		job.Status.Reason = lmevalservicev1beta1.FailedReason
+		job.Status.Message = pod.Status.ContainerStatuses[mainIndex].LastTerminationState.Terminated.Reason
+	}
+
+	err = r.Status().Update(ctx, job)
+	if err != nil {
+		log.Error(err, "unable to update LMEvalJob status", "state", job.Status.State)
+	}
+	r.Recorder.Event(job, "Normal", "PodCompleted",
+		fmt.Sprintf("The pod for the LMEvalJob %s in namespace %s has completed",
+			job.Name,
+			job.Namespace))
+	return ctrl.Result{}, err
 }
 
-func (r *EvalJobReconciler) getPod(ctx context.Context, job *lmevalservicev1beta1.EvalJob) (*corev1.Pod, error) {
+func (r *LMEvalJobReconciler) getPod(ctx context.Context, job *lmevalservicev1beta1.LMEvalJob) (*corev1.Pod, error) {
 	var pod = corev1.Pod{}
 	if err := r.Get(ctx, types.NamespacedName{Namespace: job.Namespace, Name: job.Name}, &pod); err != nil {
 		return nil, err
@@ -333,7 +367,7 @@ func (r *EvalJobReconciler) getPod(ctx context.Context, job *lmevalservicev1beta
 	return nil, fmt.Errorf("pod doesn't have proper entry in the OwnerReferences")
 }
 
-func (r *EvalJobReconciler) deleteJobPod(ctx context.Context, job *lmevalservicev1beta1.EvalJob) error {
+func (r *LMEvalJobReconciler) deleteJobPod(ctx context.Context, job *lmevalservicev1beta1.LMEvalJob) error {
 	pod := corev1.Pod{
 		TypeMeta: v1.TypeMeta{
 			Kind:       "Pod",
@@ -354,10 +388,10 @@ func (r *EvalJobReconciler) deleteJobPod(ctx context.Context, job *lmevalservice
 	return r.Delete(ctx, &pod, &client.DeleteOptions{})
 }
 
-func (r *EvalJobReconciler) handleComplete(ctx context.Context, log logr.Logger, job *lmevalservicev1beta1.EvalJob) (ctrl.Result, error) {
+func (r *LMEvalJobReconciler) handleComplete(ctx context.Context, log logr.Logger, job *lmevalservicev1beta1.LMEvalJob) (ctrl.Result, error) {
 	if job.Status.CompleteTime == nil {
 		r.Recorder.Event(job, "Normal", "JobCompleted",
-			fmt.Sprintf("Tthe EvalJob %s in namespace %s has completed",
+			fmt.Sprintf("The LMEvalJob %s in namespace %s has completed",
 				job.Name,
 				job.Namespace))
 		// TODO: final wrap up/clean up
@@ -370,7 +404,7 @@ func (r *EvalJobReconciler) handleComplete(ctx context.Context, log logr.Logger,
 	return ctrl.Result{}, nil
 }
 
-func (r *EvalJobReconciler) handleCancel(ctx context.Context, log logr.Logger, job *lmevalservicev1beta1.EvalJob) (ctrl.Result, error) {
+func (r *LMEvalJobReconciler) handleCancel(ctx context.Context, log logr.Logger, job *lmevalservicev1beta1.LMEvalJob) (ctrl.Result, error) {
 	// delete the pod and update the state to complete
 	if _, err := r.getPod(ctx, job); err != nil {
 		// pod is gone. update status
@@ -382,8 +416,8 @@ func (r *EvalJobReconciler) handleCancel(ctx context.Context, log logr.Logger, j
 		job.Status.Reason = lmevalservicev1beta1.CancelledReason
 		if err := r.deleteJobPod(ctx, job); err != nil {
 			// leave the state as is and retry again
-			log.Error(err, "failed to delete pod. scheduled a retry after 10 seconds")
-			return ctrl.Result{Requeue: true, RequeueAfter: time.Second * 10}, err
+			log.Error(err, "failed to delete pod. scheduled a retry", "interval", r.options.PodCheckingInterval.String())
+			return ctrl.Result{Requeue: true, RequeueAfter: r.options.PodCheckingInterval}, err
 		}
 	}
 
@@ -392,13 +426,13 @@ func (r *EvalJobReconciler) handleCancel(ctx context.Context, log logr.Logger, j
 		log.Error(err, "failed to update status for cancellation")
 	}
 	r.Recorder.Event(job, "Normal", "Cancelled",
-		fmt.Sprintf("Tthe EvalJob %s in namespace %s has cancelled and changed its state to Complete",
+		fmt.Sprintf("The LMEvalJob %s in namespace %s has cancelled and changed its state to Complete",
 			job.Name,
 			job.Namespace))
 	return ctrl.Result{}, err
 }
 
-func (r *EvalJobReconciler) createPod(job *lmevalservicev1beta1.EvalJob) *corev1.Pod {
+func (r *LMEvalJobReconciler) createPod(job *lmevalservicev1beta1.LMEvalJob) *corev1.Pod {
 	var allowPrivilegeEscalation = false
 	var runAsNonRootUser = true
 	var ownerRefController = true
@@ -431,7 +465,7 @@ func (r *EvalJobReconciler) createPod(job *lmevalservicev1beta1.EvalJob) *corev1
 				{
 					Name:            "driver",
 					Image:           r.options.DriverImage,
-					ImagePullPolicy: corev1.PullAlways,
+					ImagePullPolicy: r.options.ImagePullPolicy,
 					Command:         []string{DriverPath, "--copy", DestDriverPath},
 					SecurityContext: &corev1.SecurityContext{
 						AllowPrivilegeEscalation: &allowPrivilegeEscalation,
@@ -454,7 +488,7 @@ func (r *EvalJobReconciler) createPod(job *lmevalservicev1beta1.EvalJob) *corev1
 				{
 					Name:            "main",
 					Image:           r.options.PodImage,
-					ImagePullPolicy: corev1.PullAlways,
+					ImagePullPolicy: r.options.ImagePullPolicy,
 					Env: []corev1.EnvVar{
 						{
 							Name: "GENAI_KEY",
@@ -507,7 +541,7 @@ func (r *EvalJobReconciler) createPod(job *lmevalservicev1beta1.EvalJob) *corev1
 	return &pod
 }
 
-func generateArgs(job *lmevalservicev1beta1.EvalJob) []string {
+func generateArgs(job *lmevalservicev1beta1.LMEvalJob) []string {
 	if job == nil {
 		return nil
 	}
@@ -542,7 +576,7 @@ func generateArgs(job *lmevalservicev1beta1.EvalJob) []string {
 	return []string{"sh", "-ec", strings.Join(cmds, " ")}
 }
 
-func generateCmd(job *lmevalservicev1beta1.EvalJob) []string {
+func generateCmd(job *lmevalservicev1beta1.LMEvalJob) []string {
 	if job == nil {
 		return nil
 	}

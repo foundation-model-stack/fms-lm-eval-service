@@ -3,6 +3,8 @@ data:
   driver-image: quay.io/yhwang/lm-eval-aas-driver:latest
   pod-image: quay.io/yhwang/lm-eval-aas-flask:test
   driver-serviceaccount: driver
+  pod-checking-interval: "10s"
+  image-pull-policy: Always
 kind: ConfigMap
 metadata:
   name: configmap

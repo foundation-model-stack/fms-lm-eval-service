@@ -60,7 +60,7 @@ type Driver interface {
 
 type driverImpl struct {
 	client client.Client
-	job    lmevalservicev1beta1.EvalJob
+	job    lmevalservicev1beta1.LMEvalJob
 	Option *DriverOption
 }
 
@@ -183,7 +183,7 @@ func (d *driverImpl) updateCompleteStatus(err error) error {
 	} else {
 		// read the content of result*.json
 		pattern := filepath.Join(d.Option.OutputPath, "result*.json")
-		filepath.WalkDir(d.Option.OutputPath, func(path string, dir fs.DirEntry, err error) error {
+		if err := filepath.WalkDir(d.Option.OutputPath, func(path string, dir fs.DirEntry, err error) error {
 			if err != nil {
 				return err
 			}
@@ -201,7 +201,9 @@ func (d *driverImpl) updateCompleteStatus(err error) error {
 				}
 			}
 			return nil
-		})
+		}); err != nil {
+			return err
+		}
 	}
 	if err := d.client.Status().Update(d.Option.Context, &d.job); err != nil {
 		d.Option.Logger.Error(err, "unable to update EvalJob.Status.State to Complete")

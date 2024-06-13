@@ -23,9 +23,9 @@ rules:
   - list
   - watch
 - apiGroups:
-  - lm-eval-service.github.com
+  - foundation-model-stack.github.com.github.com
   resources:
-  - evaljobs
+  - lmevaljobs
   verbs:
   - create
   - delete
@@ -35,15 +35,15 @@ rules:
   - update
   - watch
 - apiGroups:
-  - lm-eval-service.github.com
+  - foundation-model-stack.github.com.github.com
   resources:
-  - evaljobs/finalizers
+  - lmevaljobs/finalizers
   verbs:
   - update
 - apiGroups:
-  - lm-eval-service.github.com
+  - foundation-model-stack.github.com.github.com
   resources:
-  - evaljobs/status
+  - lmevaljobs/status
   verbs:
   - get
   - patch
