@@ -21,7 +21,7 @@ patches:
       metadata:
         name: genai-key
       data:
-        key: cGFrLVhLczdYSlRfUlN6anVKTXZzeV81VWEzNlFWZ3JwVm1aaEdUS1VuZldNRVk=
+        key: <your API key>
   - patch: |-
       apiVersion: route.openshift.io/v1
       kind: Route
