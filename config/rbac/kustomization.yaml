@@ -7,9 +7,7 @@ resources:
 - service_account.yaml
 - driver_service_account.yaml
 - role.yaml
-- driver_role.yaml
 - role_binding.yaml
-- driver_role_binding.yaml
 - leader_election_role.yaml
 - leader_election_role_binding.yaml
 # For each CRD, "Editor" and "Viewer" roles are scaffolded by

@@ -28,6 +28,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 
 	"github.com/foundation-model-stack/fms-lm-eval-service/backend/driver"
+	"github.com/spf13/viper"
 )
 
 const (
@@ -38,7 +39,8 @@ var (
 	copy         = flag.String("copy", "", "copy this binary to specified destination path")
 	jobNameSpace = flag.String("job-namespace", "", "Job's namespace ")
 	jobName      = flag.String("job-name", "", "Job's name")
-	configMap    = flag.String("configmap", "", "ConfigMap name")
+	grpcService  = flag.String("grpc-service", "", "grpc service name")
+	grpcPort     = flag.Int("grpc-port", 8082, "grpc port")
 	outputPath   = flag.String("output-path", OutputPath, "output path")
 	driverLog    = ctrl.Log.WithName("driver")
 )
@@ -50,6 +52,8 @@ func main() {
 	opts.BindFlags(flag.CommandLine)
 
 	flag.Parse()
+	viper.AutomaticEnv()
+
 	log.SetLogger(zap.New(zap.UseFlagOptions(&opts)))
 	ctx := context.Background()
 	args := flag.Args()
@@ -75,7 +79,8 @@ func main() {
 		JobNamespace: *jobNameSpace,
 		JobName:      *jobName,
 		OutputPath:   *outputPath,
-		ConfigMap:    *configMap,
+		GrpcService:  *grpcService,
+		GrpcPort:     *grpcPort,
 		Logger:       driverLog,
 		Args:         args,
 	}
@@ -86,10 +91,13 @@ func main() {
 		os.Exit(1)
 	}
 
+	var exitCode = 0
 	if err := driver.Run(); err != nil {
 		driverLog.Error(err, "Driver.Run failed")
-		os.Exit(1)
+		exitCode = 1
 	}
+	driver.Cleanup()
+	os.Exit(exitCode)
 }
 
 func CopyExec(destination string) (err error) {

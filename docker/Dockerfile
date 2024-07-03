@@ -16,7 +16,7 @@ RUN pip install --no-cache-dir --user --upgrade ibm-generative-ai[lm-eval]
 RUN pip install --no-cache-dir --user -r server/requirements.txt
 # Clone the Git repository and install the Python package
 RUN git clone https://github.com/EleutherAI/lm-evaluation-harness.git && \
-    cd lm-evaluation-harness && \
+    cd lm-evaluation-harness &&  git checkout 568af943e315100af3f00937bfd6947844769ab8 && \
     curl --output lm_eval/models/bam.py https://raw.githubusercontent.com/IBM/ibm-generative-ai/main/src/genai/extensions/lm_eval/model.py && \
     git apply /opt/app-root/src/server/patch/models.patch && pip install --no-cache-dir --user -e .[unitxt]
 

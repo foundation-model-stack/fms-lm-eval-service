@@ -121,6 +121,7 @@ replacements:
           kind: Certificate
           group: cert-manager.io
           version: v1
+          name: serving-cert
         fieldPaths:
           - .spec.dnsNames.0
           - .spec.dnsNames.1
@@ -128,6 +129,30 @@ replacements:
           delimiter: '.'
           index: 0
           create: true
+  - source: # Add cert-manager annotation to the GRPC Service
+      kind: Service
+      version: v1
+      name: lm-eval-grpc
+      fieldPath: .metadata.name # namespace of the service
+    targets:
+      - select:
+          kind: Certificate
+          group: cert-manager.io
+          version: v1
+          name: grpc-server-cert
+        fieldPaths:
+          - .spec.dnsNames.0
+          - .spec.dnsNames.1
+        options:
+          delimiter: '.'
+          index: 0
+          create: true
+      - select:
+          kind: ConfigMap
+          version: v1
+          name: configmap
+        fieldPaths:
+          - .data.grpc-service
   - source:
       kind: Service
       version: v1
@@ -138,11 +163,48 @@ replacements:
           kind: Certificate
           group: cert-manager.io
           version: v1
+          name: serving-cert
         fieldPaths:
           - .spec.dnsNames.0
           - .spec.dnsNames.1
         options:
           delimiter: '.'
+          index: 1
+          create: true
+  - source:
+      kind: Service
+      version: v1
+      name: lm-eval-grpc
+      fieldPath: .metadata.namespace # namespace of the service
+    targets:
+      - select:
+          kind: Certificate
+          group: cert-manager.io
+          version: v1
+          name: grpc-server-cert
+        fieldPaths:
+          - .spec.dnsNames.0
+          - .spec.dnsNames.1
+        options:
+          delimiter: '.'
+          index: 1
+          create: true
+  - source:
+      kind: Service
+      version: v1
+      name: lm-eval-grpc
+      fieldPath: .spec.ports.0.port # port number
+    targets:
+      - select:
+          kind: Certificate
+          group: cert-manager.io
+          version: v1
+          name: grpc-server-cert
+        fieldPaths:
+          - .spec.dnsNames.0
+          - .spec.dnsNames.1
+        options:
+          delimiter: ':'
           index: 1
           create: true
   - source:

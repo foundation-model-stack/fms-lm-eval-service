@@ -5,6 +5,8 @@ data:
   driver-serviceaccount: driver
   pod-checking-interval: "10s"
   image-pull-policy: Always
+  grpc-service: THIS_WILL_BE_REPLACED
+  grpc-port: "8082"
 kind: ConfigMap
 metadata:
   name: configmap
