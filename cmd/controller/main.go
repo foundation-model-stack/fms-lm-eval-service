@@ -36,6 +36,7 @@ import (
 
 	lmevalservicev1beta1 "github.com/foundation-model-stack/fms-lm-eval-service/api/v1beta1"
 	"github.com/foundation-model-stack/fms-lm-eval-service/backend/controller"
+	"github.com/spf13/viper"
 	// +kubebuilder:scaffold:imports
 )
 
@@ -76,6 +77,7 @@ func main() {
 	}
 	opts.BindFlags(flag.CommandLine)
 	flag.Parse()
+	viper.AutomaticEnv()
 
 	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&opts)))
 
@@ -127,13 +129,15 @@ func main() {
 		os.Exit(1)
 	}
 
-	if err = (&controller.LMEvalJobReconciler{
+	ctor := &controller.LMEvalJobReconciler{
 		ConfigMap: configMap,
 		Namespace: namespace,
 		Client:    mgr.GetClient(),
 		Scheme:    mgr.GetScheme(),
 		Recorder:  mgr.GetEventRecorderFor("lm-eval-service-controller"),
-	}).SetupWithManager(mgr); err != nil {
+	}
+
+	if err = ctor.SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "EvalJob")
 		os.Exit(1)
 	}

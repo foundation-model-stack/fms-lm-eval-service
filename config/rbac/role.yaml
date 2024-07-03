@@ -23,6 +23,14 @@ rules:
   - list
   - watch
 - apiGroups:
+  - ""
+  resources:
+  - secrets
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
   - foundation-model-stack.github.com.github.com
   resources:
   - lmevaljobs

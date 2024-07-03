@@ -19,24 +19,36 @@ package driver
 import (
 	"bufio"
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"time"
 
 	lmevalservicev1beta1 "github.com/foundation-model-stack/fms-lm-eval-service/api/v1beta1"
+	"github.com/foundation-model-stack/fms-lm-eval-service/backend/api/v1beta1"
 	"github.com/go-logr/logr"
+	"github.com/spf13/viper"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials"
+	"google.golang.org/grpc/credentials/insecure"
 	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/apimachinery/pkg/types"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
-	ctrl "sigs.k8s.io/controller-runtime"
-	client "sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 var (
 	scheme = runtime.NewScheme()
+)
+
+const (
+	GrpcClientKeyEnv  = "GRPC_CLIENT_KEY"
+	GrpcClientCertEnv = "GRPC_CLIENT_CERT"
+	GrpcServerCaEnv   = "GRPC_SERVER_CA"
 )
 
 func init() {
@@ -48,7 +60,8 @@ type DriverOption struct {
 	Context      context.Context
 	JobNamespace string
 	JobName      string
-	ConfigMap    string
+	GrpcService  string
+	GrpcPort     int
 	OutputPath   string
 	Logger       logr.Logger
 	Args         []string
@@ -56,12 +69,13 @@ type DriverOption struct {
 
 type Driver interface {
 	Run() error
+	Cleanup()
 }
 
 type driverImpl struct {
-	client client.Client
-	job    lmevalservicev1beta1.LMEvalJob
-	Option *DriverOption
+	client   v1beta1.LMEvalJobUpdateServiceClient
+	grpcConn *grpc.ClientConn
+	Option   *DriverOption
 }
 
 func NewDriver(opt *DriverOption) (Driver, error) {
@@ -77,50 +91,90 @@ func NewDriver(opt *DriverOption) (Driver, error) {
 		return nil, fmt.Errorf("JobNamespace or JobName is empty")
 	}
 
-	return &driverImpl{Option: opt}, nil
+	conn, err := getGRPCClientConn(opt)
+	if err != nil {
+		return nil, err
+	}
+
+	return &driverImpl{
+		client:   v1beta1.NewLMEvalJobUpdateServiceClient(conn),
+		grpcConn: conn,
+		Option:   opt,
+	}, nil
 }
 
 // Run implements Driver.
 func (d *driverImpl) Run() error {
-	config, err := ctrl.GetConfig()
-	if err != nil {
-		return err
-	}
-
-	client, err := client.New(config, client.Options{Scheme: scheme})
-	if err != nil {
-		return err
-	}
-
-	d.client = client
-	if err := d.getJob(); err != nil {
-		return err
-	}
-
 	if err := d.updateStatus(lmevalservicev1beta1.RunningJobState); err != nil {
 		return err
 	}
-
-	err = d.exec()
-
-	if err := d.getJob(); err != nil {
-		return err
-	}
+	err := d.exec()
 
 	return d.updateCompleteStatus(err)
 }
 
-func (d *driverImpl) getJob() error {
-	if err := d.client.Get(d.Option.Context,
-		types.NamespacedName{
-			Name:      d.Option.JobName,
-			Namespace: d.Option.JobNamespace,
-		},
-		&d.job); err != nil {
-
-		return err
+func (d *driverImpl) Cleanup() {
+	if d != nil && d.grpcConn != nil {
+		d.grpcConn.Close()
 	}
-	return nil
+}
+
+func getGRPCClientConn(option *DriverOption) (clientConn *grpc.ClientConn, err error) {
+	// Set up a connection to the server.
+	if option.GrpcPort == 0 || option.GrpcService == "" {
+		return nil, fmt.Errorf("GrpcService or GrpcPort is not valid")
+	}
+
+	serverAddr := fmt.Sprintf("%s:%d", option.GrpcService, option.GrpcPort)
+
+	if viper.IsSet(GrpcServerCaEnv) {
+		serverCAPath := viper.GetString(GrpcServerCaEnv)
+
+		if viper.IsSet(GrpcClientCertEnv) && viper.IsSet(GrpcClientKeyEnv) {
+			// mTLS
+			certPath, keyPath := viper.GetString(GrpcClientCertEnv), viper.GetString(GrpcClientKeyEnv)
+			var cert tls.Certificate
+			cert, err = tls.LoadX509KeyPair(certPath, keyPath)
+			if err != nil {
+				return nil, err
+			}
+
+			ca := x509.NewCertPool()
+			var caBytes []byte
+			caBytes, err = os.ReadFile(serverCAPath)
+			if err != nil {
+				return nil, fmt.Errorf("failed to read server CA %q: %v", serverCAPath, err)
+			}
+			if ok := ca.AppendCertsFromPEM(caBytes); !ok {
+				return nil, fmt.Errorf("failed to parse server CA %q", serverCAPath)
+			}
+
+			tlsConfig := &tls.Config{
+				ServerName:   serverAddr,
+				Certificates: []tls.Certificate{cert},
+				RootCAs:      ca,
+			}
+
+			clientConn, err = grpc.NewClient(serverAddr, grpc.WithTransportCredentials(credentials.NewTLS(tlsConfig)))
+		} else {
+			// TLS
+			creds, err := credentials.NewClientTLSFromFile(serverCAPath, serverAddr)
+			if err != nil {
+				return nil, fmt.Errorf("failed to load server CA: %v", err)
+			}
+
+			clientConn, err = grpc.NewClient(serverAddr, grpc.WithTransportCredentials(creds))
+			if err != nil {
+				return nil, fmt.Errorf("failed to connect to GRPC server: %v", err)
+			}
+		}
+	} else {
+		clientConn, err = grpc.NewClient(
+			serverAddr,
+			grpc.WithTransportCredentials(insecure.NewCredentials()),
+		)
+	}
+	return
 }
 
 func (d *driverImpl) exec() error {
@@ -142,7 +196,16 @@ func (d *driverImpl) exec() error {
 	}
 	berr := bufio.NewWriter(stderr)
 
+	executor := exec.Command(d.Option.Args[0], args...)
+	stdin, err := executor.StdinPipe()
+	if err != nil {
+		return err
+	}
+	executor.Stdout = bout
+	executor.Stderr = berr
+
 	defer func() {
+		stdin.Close()
 		bout.Flush()
 		stdout.Sync()
 		stdout.Close()
@@ -151,63 +214,89 @@ func (d *driverImpl) exec() error {
 		stderr.Close()
 	}()
 
-	fmt.Printf("args:%v\n", args)
-	executor := exec.Command(d.Option.Args[0], args...)
-	executor.Stdin = os.Stdin
-	executor.Stdout = bout
-	executor.Stderr = berr
-
-	if err := executor.Run(); err != nil {
-		return err
-	}
-	return nil
+	// temporally fix the trust_remote_code issue
+	io.WriteString(stdin, "y\n")
+	return executor.Run()
 }
 
 func (d *driverImpl) updateStatus(state lmevalservicev1beta1.JobState) error {
-	if d.job.Status.State != state {
-		d.job.Status.State = state
-		if err := d.client.Status().Update(d.Option.Context, &d.job); err != nil {
-			d.Option.Logger.Error(err, "unable to update EvalJob.Status.State")
-			return err
-		}
+	ctx, cancel := context.WithTimeout(d.Option.Context, time.Second*10)
+	defer cancel()
+
+	r, err := d.client.UpdateStatus(ctx, &v1beta1.JobStatus{
+		JobName:       d.Option.JobName,
+		JobNamespace:  d.Option.JobNamespace,
+		State:         string(state),
+		Reason:        string(lmevalservicev1beta1.NoReason),
+		StatusMessage: "update status from the driver: running",
+	})
+
+	if r != nil && err == nil {
+		d.Option.Logger.Info(fmt.Sprintf("UpdateStatus done: %s", r.Message))
 	}
-	return nil
+
+	return err
 }
 
 func (d *driverImpl) updateCompleteStatus(err error) error {
-	d.job.Status.State = lmevalservicev1beta1.CompleteJobState
-	d.job.Status.Reason = lmevalservicev1beta1.SucceedReason
-	if err != nil {
-		d.job.Status.Reason = lmevalservicev1beta1.FailedReason
-		d.job.Status.Message = err.Error()
-	} else {
-		// read the content of result*.json
-		pattern := filepath.Join(d.Option.OutputPath, "result*.json")
-		if err := filepath.WalkDir(d.Option.OutputPath, func(path string, dir fs.DirEntry, err error) error {
-			if err != nil {
-				return err
-			}
-			// only output directory
-			if path != d.Option.OutputPath && dir != nil && dir.IsDir() {
-				return fs.SkipDir
-			}
+	ctx, cancel := context.WithTimeout(d.Option.Context, time.Second*10)
+	defer cancel()
+	newStatus := v1beta1.JobStatus{
+		JobName:       d.Option.JobName,
+		JobNamespace:  d.Option.JobNamespace,
+		State:         string(lmevalservicev1beta1.CompleteJobState),
+		Reason:        string(lmevalservicev1beta1.SucceedReason),
+		StatusMessage: "update status from the driver: completed",
+	}
 
-			if matched, _ := filepath.Match(pattern, path); matched {
-				bytes, err := os.ReadFile(path)
-				if err != nil {
-					d.Option.Logger.Error(err, "failed to retrieve the results")
-				} else {
-					d.job.Status.Results = string(bytes)
-				}
-			}
-			return nil
-		}); err != nil {
-			return err
+	var setErr = func(err error) {
+		newStatus.Reason = string(lmevalservicev1beta1.FailedReason)
+		newStatus.StatusMessage = err.Error()
+	}
+
+	if err != nil {
+		setErr(err)
+	} else {
+		results, err := d.getResults()
+		if err != nil {
+			setErr(err)
+		} else {
+			newStatus.Results = &results
 		}
 	}
-	if err := d.client.Status().Update(d.Option.Context, &d.job); err != nil {
-		d.Option.Logger.Error(err, "unable to update EvalJob.Status.State to Complete")
-		return err
+
+	r, err := d.client.UpdateStatus(ctx, &newStatus)
+	if r != nil && err == nil {
+		d.Option.Logger.Info(fmt.Sprintf("UpdateStatus with the results: %s", r.Message))
 	}
-	return nil
+
+	return err
+}
+
+func (d *driverImpl) getResults() (string, error) {
+	var results string
+	pattern := filepath.Join(d.Option.OutputPath, "result*.json")
+	if err := filepath.WalkDir(d.Option.OutputPath, func(path string, dir fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		// only output directory
+		if path != d.Option.OutputPath && dir != nil && dir.IsDir() {
+			return fs.SkipDir
+		}
+
+		if matched, _ := filepath.Match(pattern, path); matched {
+			bytes, err := os.ReadFile(path)
+			if err != nil {
+				d.Option.Logger.Error(err, "failed to retrieve the results")
+			} else {
+				results = string(bytes)
+			}
+		}
+		return nil
+	}); err != nil {
+		return "", err
+	}
+
+	return results, nil
 }

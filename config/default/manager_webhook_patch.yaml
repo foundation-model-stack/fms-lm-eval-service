@@ -8,6 +8,13 @@ spec:
     spec:
       containers:
       - name: manager
+        env:
+        - name: GRPC_SERVER_CERT
+          value: /tmp/k8s-grpc-server/certs/tls.crt
+        - name: GRPC_SERVER_KEY
+          value: /tmp/k8s-grpc-server/certs/tls.key
+        - name: GRPC_CLIENT_CA
+          value: /tmp/k8s-grpc-client/certs/ca.crt
         ports:
         - containerPort: 9443
           name: webhook-server
@@ -16,8 +23,22 @@ spec:
         - mountPath: /tmp/k8s-webhook-server/serving-certs
           name: cert
           readOnly: true
+        - mountPath: /tmp/k8s-grpc-server/certs
+          name: grpc-server
+          readOnly: true
+        - mountPath: /tmp/k8s-grpc-client/certs
+          name: grpc-client
+          readOnly: true
       volumes:
       - name: cert
         secret:
           defaultMode: 420
           secretName: webhook-server-cert
+      - name: grpc-server
+        secret:
+          defaultMode: 420
+          secretName: grpc-server-cert
+      - name: grpc-client
+        secret:
+          defaultMode: 420
+          secretName: grpc-client-cert

@@ -111,6 +111,11 @@ docker-push: ## Push docker image with the manager.
 docker-push-driver: ## Push docker image with the manager.
 	$(CONTAINER_TOOL) push ${IMG_DRIVER}
 
+.PHONY: proto
+proto: ## generate GRPC client and server code
+	protoc --experimental_allow_proto3_optional --go_out=. --go_opt=paths=source_relative --go-grpc_out=. \
+		--go-grpc_opt=paths=source_relative backend/api/v1beta1/update_status.proto
+
 # PLATFORMS defines the target platforms for the manager image be built to provide support to multiple
 # architectures. (i.e. make docker-buildx IMG=myregistry/mypoperator:0.0.1). To use this option you need to:
 # - be able to use docker buildx. More info: https://docs.docker.com/build/buildx/

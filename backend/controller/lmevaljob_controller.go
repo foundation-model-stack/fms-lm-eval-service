@@ -19,7 +19,9 @@ package controller
 import (
 	"context"
 	"fmt"
+	"reflect"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -40,7 +42,10 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	lmevalservicev1beta1 "github.com/foundation-model-stack/fms-lm-eval-service/api/v1beta1"
+	backendv1beta1 "github.com/foundation-model-stack/fms-lm-eval-service/backend/api/v1beta1"
+	"github.com/foundation-model-stack/fms-lm-eval-service/backend/driver"
 	"github.com/go-logr/logr"
+	"github.com/spf13/viper"
 )
 
 const (
@@ -51,11 +56,22 @@ const (
 	DriverServiceAccountKey     = "driver-serviceaccount"
 	PodCheckingIntervalKey      = "pod-checking-interval"
 	ImagePullPolicyKey          = "image-pull-policy"
+	GrpcPortKey                 = "grpc-port"
+	GrpcServiceKey              = "grpc-service"
+	GrpcServerSecretKey         = "grpc-server-secret"
+	GrpcClientSecretKey         = "grpc-client-secret"
+	GrpcServerCertEnv           = "GRPC_SERVER_CERT"
+	GrpcServerKeyEnv            = "GRPC_SERVER_KEY"
+	GrpcClientCaEnv             = "GRPC_CLIENT_CA"
 	DefaultPodImage             = "quay.io/yhwang/lm-eval-aas-flask:test"
 	DefaultDriverImage          = "quay.io/yhwang/lm-eval-aas-driver:test"
 	DefaultDriverServiceAccount = "driver"
 	DefaultPodCheckingInterval  = time.Second * 10
 	DefaultImagePullPolicy      = corev1.PullAlways
+	DefaultGrpcPort             = 8082
+	DefaultGrpcService          = "lm-eval-grpc"
+	DefaultGrpcServerSecret     = "grpc-server-cert"
+	DefaultGrpcClientSecret     = "grpc-client-cert"
 )
 
 var (
@@ -64,6 +80,26 @@ var (
 		corev1.PullNever:        corev1.PullNever,
 		corev1.PullIfNotPresent: corev1.PullIfNotPresent,
 	}
+
+	optionKeys = map[string]string{
+		"PodImage":             PodImageKey,
+		"DriverImage":          DriverImageKey,
+		"DriverServiceAccount": DriverServiceAccountKey,
+		"PodCheckingInterval":  PodCheckingIntervalKey,
+		"ImagePullPolicy":      ImagePullPolicyKey,
+		"GrpcPort":             GrpcPortKey,
+		"GrpcService":          GrpcServiceKey,
+		"GrpcServerSecret":     GrpcServerSecretKey,
+		"GrpcClientSecret":     GrpcClientSecretKey,
+	}
+)
+
+type TLSMode int
+
+const (
+	TLSMode_None TLSMode = 0
+	TLSMode_TLS  TLSMode = 1
+	TLSMode_mTLS TLSMode = 2
 )
 
 // LMEvalJobReconciler reconciles a LMEvalJob object
@@ -73,7 +109,7 @@ type LMEvalJobReconciler struct {
 	Recorder  record.EventRecorder
 	ConfigMap string
 	Namespace string
-	options   ServiceOptions
+	options   *ServiceOptions
 }
 
 type ServiceOptions struct {
@@ -82,6 +118,11 @@ type ServiceOptions struct {
 	DriverServiceAccount string
 	PodCheckingInterval  time.Duration
 	ImagePullPolicy      corev1.PullPolicy
+	GrpcPort             int
+	GrpcService          string
+	GrpcServerSecret     string
+	GrpcClientSecret     string
+	grpcTLSMode          TLSMode
 }
 
 // +kubebuilder:rbac:groups=foundation-model-stack.github.com.github.com,resources=lmevaljobs,verbs=get;list;watch;create;update;patch;delete
@@ -89,6 +130,7 @@ type ServiceOptions struct {
 // +kubebuilder:rbac:groups=foundation-model-stack.github.com.github.com,resources=lmevaljobs/finalizers,verbs=update
 // +kubebuilder:rbac:groups="",resources=pods,verbs=get;list;watch;create;delete
 // +kubebuilder:rbac:groups="",resources=configmaps,verbs=get;watch;list
+// +kubebuilder:rbac:groups="",resources=secrets,verbs=get;watch;list
 
 func (r *LMEvalJobReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	log := log.FromContext(ctx)
@@ -135,10 +177,10 @@ func (r *LMEvalJobReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 func (r *LMEvalJobReconciler) SetupWithManager(mgr ctrl.Manager) error {
 
 	// Add a runnable to retrieve the settings from the specified configmap
-	if err := mgr.Add(manager.RunnableFunc(func(context.Context) error {
+	if err := mgr.Add(manager.RunnableFunc(func(ctx context.Context) error {
 		var cm corev1.ConfigMap
 		if err := r.Get(
-			context.Background(),
+			ctx,
 			types.NamespacedName{Namespace: r.Namespace, Name: r.ConfigMap},
 			&cm); err != nil {
 
@@ -150,9 +192,23 @@ func (r *LMEvalJobReconciler) SetupWithManager(mgr ctrl.Manager) error {
 			return err
 		}
 
-		if err := r.constructOptionsFromConfigMap(&cm); err != nil {
+		if err := r.constructOptionsFromConfigMap(ctx, &cm); err != nil {
 			return err
 		}
+
+		if err := r.checkSecrets(ctx); err != nil {
+			// if mTLS/TLS is not enable, then we are good. Otherwise error out
+			if viper.IsSet(GrpcServerCertEnv) ||
+				viper.IsSet(GrpcServerKeyEnv) ||
+				viper.IsSet(GrpcClientCaEnv) {
+				return fmt.Errorf("TLS or mTLS is enabled for GRPC server but secrets don't exist")
+			}
+		}
+
+		// ideally, this should be call in the main.go, but GRPC server depends on the
+		// constructOptionsFromConfigMap to get the settings.
+		go StartGrpcServer(ctx, r)
+
 		return nil
 	})); err != nil {
 		return err
@@ -186,40 +242,120 @@ func (r *LMEvalJobReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Complete(r)
 }
 
-func (r *LMEvalJobReconciler) constructOptionsFromConfigMap(configmap *corev1.ConfigMap) error {
-	r.options.DriverImage = DefaultDriverImage
-	r.options.PodImage = DefaultPodImage
-	r.options.DriverServiceAccount = DefaultDriverServiceAccount
-	r.options.PodCheckingInterval = DefaultPodCheckingInterval
-	r.options.ImagePullPolicy = DefaultImagePullPolicy
-	log := log.FromContext(context.Background())
+func (r *LMEvalJobReconciler) checkSecrets(ctx context.Context) error {
 
-	if v, found := configmap.Data[DriverImageKey]; found {
-		r.options.DriverImage = v
+	var isSecretExists = func(name string) bool {
+		var secret corev1.Secret
+		err := r.Get(ctx, types.NamespacedName{Namespace: r.Namespace, Name: name}, &secret)
+		return err == nil
 	}
-	if v, found := configmap.Data[PodImageKey]; found {
-		r.options.PodImage = v
+
+	if !isSecretExists(r.options.GrpcServerSecret) {
+		return fmt.Errorf("secret %s not found", r.options.GrpcServerSecret)
 	}
-	if v, found := configmap.Data[DriverServiceAccountKey]; found {
-		r.options.DriverServiceAccount = v
+	if !isSecretExists(r.options.GrpcClientSecret) {
+		return fmt.Errorf("secret %s not found", r.options.GrpcServerSecret)
 	}
-	if v, found := configmap.Data[PodCheckingIntervalKey]; found {
-		if d, err := time.ParseDuration(v); err == nil {
-			r.options.PodCheckingInterval = d
-		} else {
-			log.Error(err, "failed to parse the configmap", PodCheckingIntervalKey, v)
+	return nil
+}
+
+func (r *LMEvalJobReconciler) updateStatus(ctx context.Context, newStatus *backendv1beta1.JobStatus) error {
+	log := log.FromContext(ctx)
+
+	if strings.Trim(newStatus.GetJobName(), " ") == "" ||
+		strings.Trim(newStatus.GetJobNamespace(), " ") == "" {
+
+		return fmt.Errorf("JobName or JobNameSpace is empty")
+	}
+
+	job := &lmevalservicev1beta1.LMEvalJob{}
+	if err := r.Get(ctx, types.NamespacedName{
+		Namespace: newStatus.JobNamespace,
+		Name:      newStatus.JobName,
+	}, job); err != nil {
+		log.Info("unable to fetch LMEvalJob")
+		return err
+	}
+
+	job.Status.State = lmevalservicev1beta1.JobState(newStatus.GetState())
+	job.Status.Reason = lmevalservicev1beta1.Reason(newStatus.GetReason())
+	if newStatus.GetStatusMessage() != "" {
+		job.Status.Message = newStatus.GetStatusMessage()
+	}
+	if newStatus.Results != nil {
+		job.Status.Results = newStatus.GetResults()
+	}
+
+	err := r.Status().Update(ctx, job)
+	if err != nil {
+		log.Error(err, "failed to update status")
+	}
+	return err
+}
+
+func (r *LMEvalJobReconciler) constructOptionsFromConfigMap(
+	ctx context.Context, configmap *corev1.ConfigMap) error {
+	r.options = &ServiceOptions{
+		DriverImage:          DefaultDriverImage,
+		PodImage:             DefaultPodImage,
+		DriverServiceAccount: DefaultDriverServiceAccount,
+		PodCheckingInterval:  DefaultPodCheckingInterval,
+		ImagePullPolicy:      DefaultImagePullPolicy,
+		GrpcPort:             DefaultGrpcPort,
+		GrpcService:          DefaultGrpcService,
+		GrpcServerSecret:     DefaultGrpcServerSecret,
+		GrpcClientSecret:     DefaultGrpcClientSecret,
+	}
+
+	log := log.FromContext(ctx)
+	rv := reflect.ValueOf(r.options).Elem()
+	var msgs []string
+
+	for idx, cap := 0, rv.NumField(); idx < cap; idx++ {
+		frv := rv.Field(idx)
+		fname := rv.Type().Field(idx).Name
+		configKey, ok := optionKeys[fname]
+		if !ok {
+			continue
+		}
+
+		if v, found := configmap.Data[configKey]; found {
+			var err error
+			switch frv.Type().Name() {
+			case "string":
+				frv.SetString(v)
+			case "int":
+				var grpcPort int
+				grpcPort, err = strconv.Atoi(v)
+				if err == nil {
+					frv.SetInt(int64(grpcPort))
+				}
+			case "Duration":
+				var d time.Duration
+				d, err = time.ParseDuration(v)
+				if err == nil {
+					frv.Set(reflect.ValueOf(d))
+				}
+			case "PullPolicy":
+				if p, found := pullPolicyMap[corev1.PullPolicy(v)]; found {
+					frv.Set(reflect.ValueOf(p))
+				} else {
+					err = fmt.Errorf("invalid PullPolicy")
+				}
+			default:
+				return fmt.Errorf("can not handle the config %v, type: %v", optionKeys[fname], frv.Type().Name())
+			}
+
+			if err != nil {
+				msgs = append(msgs, fmt.Sprintf("invalid setting for %v: %v, use default setting instead", optionKeys[fname], v))
+			}
 		}
 	}
-	if v, found := configmap.Data[ImagePullPolicyKey]; found {
-		if p, found := pullPolicyMap[corev1.PullPolicy(v)]; found {
-			r.options.ImagePullPolicy = p
-		} else {
-			log.Error(
-				fmt.Errorf("invalid %s value in the configmap: %s", ImagePullPolicyKey, v),
-				"use the default value for the ImagePullPolicy instead",
-			)
-		}
+
+	if len(msgs) > 0 {
+		log.Error(fmt.Errorf("some settings in the configmap are invalid"), strings.Join(msgs, "\n"))
 	}
+
 	return nil
 }
 
@@ -437,6 +573,117 @@ func (r *LMEvalJobReconciler) createPod(job *lmevalservicev1beta1.LMEvalJob) *co
 	var runAsNonRootUser = true
 	var ownerRefController = true
 	var runAsUser int64 = 1001030000
+	var secretMode int32 = 420
+
+	var envVars = []corev1.EnvVar{
+		{
+			Name: "GENAI_KEY",
+			ValueFrom: &corev1.EnvVarSource{
+				SecretKeyRef: &corev1.SecretKeySelector{
+					Key: "key",
+					LocalObjectReference: corev1.LocalObjectReference{
+						Name: "genai-key",
+					},
+				},
+			},
+		},
+	}
+
+	var volumeMounts = []corev1.VolumeMount{
+		{
+			Name:      "shared",
+			MountPath: "/opt/app-root/src/bin",
+		},
+	}
+
+	var volumes = []corev1.Volume{
+		{
+			Name: "shared", VolumeSource: corev1.VolumeSource{
+				EmptyDir: &corev1.EmptyDirVolumeSource{},
+			},
+		},
+	}
+
+	if r.options.grpcTLSMode == TLSMode_mTLS {
+		envVars = append(envVars,
+			corev1.EnvVar{
+				Name:  driver.GrpcClientKeyEnv,
+				Value: "/tmp/k8s-grpc-client/certs/tls.key",
+			},
+			corev1.EnvVar{
+				Name:  driver.GrpcClientCertEnv,
+				Value: "/tmp/k8s-grpc-client/certs/tls.crt",
+			},
+			corev1.EnvVar{
+				Name:  driver.GrpcServerCaEnv,
+				Value: "/tmp/k8s-grpc-server/certs/ca.crt",
+			},
+		)
+
+		volumeMounts = append(volumeMounts,
+			corev1.VolumeMount{
+				Name:      "client-cert",
+				MountPath: "/tmp/k8s-grpc-client/certs",
+			},
+			corev1.VolumeMount{
+				Name:      "server-cert",
+				MountPath: "/tmp/k8s-grpc-server/certs",
+			},
+		)
+
+		volumes = append(volumes,
+			corev1.Volume{
+				Name: "client-cert",
+				VolumeSource: corev1.VolumeSource{
+					Secret: &corev1.SecretVolumeSource{
+						SecretName:  r.options.GrpcClientSecret,
+						DefaultMode: &secretMode,
+					},
+				},
+			},
+			corev1.Volume{
+				Name: "server-cert",
+				VolumeSource: corev1.VolumeSource{
+					Secret: &corev1.SecretVolumeSource{
+						SecretName:  r.options.GrpcServerSecret,
+						DefaultMode: &secretMode,
+						Items: []corev1.KeyToPath{
+							{Key: "ca.crt", Path: "ca.crt"},
+						},
+					},
+				},
+			},
+		)
+	} else if r.options.grpcTLSMode == TLSMode_TLS {
+		envVars = append(envVars,
+			corev1.EnvVar{
+				Name:  driver.GrpcServerCaEnv,
+				Value: "/tmp/k8s-grpc-server/certs/ca.crt",
+			},
+		)
+
+		volumeMounts = append(volumeMounts,
+			corev1.VolumeMount{
+				Name:      "server-cert",
+				MountPath: "/tmp/k8s-grpc-server/certs",
+			},
+		)
+
+		volumes = append(volumes,
+			corev1.Volume{
+				Name: "server-cert",
+				VolumeSource: corev1.VolumeSource{
+					Secret: &corev1.SecretVolumeSource{
+						SecretName:  r.options.GrpcServerSecret,
+						DefaultMode: &secretMode,
+						Items: []corev1.KeyToPath{
+							{Key: "ca.crt", Path: "ca.crt"},
+						},
+					},
+				},
+			},
+		)
+	}
 
 	// Then compose the Pod CR
 	pod := corev1.Pod{
@@ -489,21 +736,9 @@ func (r *LMEvalJobReconciler) createPod(job *lmevalservicev1beta1.LMEvalJob) *co
 					Name:            "main",
 					Image:           r.options.PodImage,
 					ImagePullPolicy: r.options.ImagePullPolicy,
-					Env: []corev1.EnvVar{
-						{
-							Name: "GENAI_KEY",
-							ValueFrom: &corev1.EnvVarSource{
-								SecretKeyRef: &corev1.SecretKeySelector{
-									Key: "key",
-									LocalObjectReference: corev1.LocalObjectReference{
-										Name: "genai-key",
-									},
-								},
-							},
-						},
-					},
-					Command: generateCmd(job),
-					Args:    generateArgs(job),
+					Env:             envVars,
+					Command:         r.generateCmd(job),
+					Args:            generateArgs(job),
 					SecurityContext: &corev1.SecurityContext{
 						AllowPrivilegeEscalation: &allowPrivilegeEscalation,
 						RunAsUser:                &runAsUser,
@@ -513,12 +748,7 @@ func (r *LMEvalJobReconciler) createPod(job *lmevalservicev1beta1.LMEvalJob) *co
 							},
 						},
 					},
-					VolumeMounts: []corev1.VolumeMount{
-						{
-							Name:      "shared",
-							MountPath: "/opt/app-root/src/bin",
-						},
-					},
+					VolumeMounts: volumeMounts,
 				},
 			},
 			SecurityContext: &corev1.PodSecurityContext{
@@ -528,14 +758,8 @@ func (r *LMEvalJobReconciler) createPod(job *lmevalservicev1beta1.LMEvalJob) *co
 				},
 			},
 			ServiceAccountName: r.options.DriverServiceAccount,
-			Volumes: []corev1.Volume{
-				{
-					Name: "shared", VolumeSource: corev1.VolumeSource{
-						EmptyDir: &corev1.EmptyDirVolumeSource{},
-					},
-				},
-			},
-			RestartPolicy: corev1.RestartPolicyNever,
+			Volumes:            volumes,
+			RestartPolicy:      corev1.RestartPolicyNever,
 		},
 	}
 	return &pod
@@ -576,7 +800,7 @@ func generateArgs(job *lmevalservicev1beta1.LMEvalJob) []string {
 	return []string{"sh", "-ec", strings.Join(cmds, " ")}
 }
 
-func generateCmd(job *lmevalservicev1beta1.LMEvalJob) []string {
+func (r *LMEvalJobReconciler) generateCmd(job *lmevalservicev1beta1.LMEvalJob) []string {
 	if job == nil {
 		return nil
 	}
@@ -585,6 +809,8 @@ func generateCmd(job *lmevalservicev1beta1.LMEvalJob) []string {
 		DestDriverPath,
 		"--job-namespace", job.Namespace,
 		"--job-name", job.Name,
+		"--grpc-service", fmt.Sprintf("%s.%s.svc", r.options.GrpcService, r.Namespace),
+		"--grpc-port", strconv.Itoa(r.options.GrpcPort),
 		"--output-path", "/opt/app-root/src/output",
 		"--",
 	}
