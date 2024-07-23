@@ -19,8 +19,14 @@ package driver
 import (
 	"context"
 	"flag"
+	"fmt"
+	"net"
+	"os"
 	"testing"
 
+	"github.com/foundation-model-stack/fms-lm-eval-service/backend/api/v1beta1"
+	"github.com/stretchr/testify/assert"
+	"google.golang.org/grpc"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
@@ -30,7 +36,23 @@ var (
 	driverLog = ctrl.Log.WithName("driver-test")
 )
 
+type DummyUpdateServer struct {
+	v1beta1.UnimplementedLMEvalJobUpdateServiceServer
+}
+
+func (*DummyUpdateServer) UpdateStatus(context.Context, *v1beta1.JobStatus) (*v1beta1.Response, error) {
+	return &v1beta1.Response{
+		Code:    v1beta1.ResponseCode_OK,
+		Message: "updated the job status successfully",
+	}, nil
+}
+
 func Test_Driver(t *testing.T) {
+	server := grpc.NewServer()
+	v1beta1.RegisterLMEvalJobUpdateServiceServer(server, &DummyUpdateServer{})
+	lis, err := net.Listen("tcp", fmt.Sprintf(":%d", 8082))
+	assert.Nil(t, err)
+	go server.Serve(lis)
 
 	opts := zap.Options{
 		Development: true,
@@ -44,18 +66,18 @@ func Test_Driver(t *testing.T) {
 		Context:      context.Background(),
 		JobNamespace: "fms-lm-eval-service-system",
 		JobName:      "evaljob-sample",
-		GrpcService:  "lm-eval-grpc",
+		GrpcService:  "localhost",
 		GrpcPort:     8082,
 		OutputPath:   ".",
 		Logger:       driverLog,
 		Args:         []string{"--", "sh", "-ec", "echo \"tttttttttttttttttttt\""},
 	})
 
-	if err != nil {
-		t.Errorf("Create Driver failed: %v", err)
-	}
+	assert.Nil(t, err)
 
-	if err := driver.Run(); err != nil {
-		t.Errorf("Unexpected error: %v", err)
-	}
+	assert.Nil(t, driver.Run())
+
+	server.Stop()
+	assert.Nil(t, os.Remove("./stderr.log"))
+	assert.Nil(t, os.Remove("./stdout.log"))
 }

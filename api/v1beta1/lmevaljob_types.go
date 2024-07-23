@@ -17,6 +17,7 @@ limitations under the License.
 package v1beta1
 
 import (
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -59,9 +60,26 @@ type Arg struct {
 	Value string `json:"value,omitempty"`
 }
 
+type EnvSecret struct {
+	// Environment's name
+	Env string `json:"env"`
+	// The secret is from a secret object
+	// +optional
+	SecretRef *corev1.SecretKeySelector `json:"secretRef,omitempty"`
+	// The secret is from a plain text
+	// +optional
+	Secret *string `json:"secret,omitempty"`
+}
+
+type FileSecret struct {
+	// The secret object
+	SecretRef corev1.SecretVolumeSource `json:"secretRef,omitempty"`
+	// The path to mount the secret
+	MountPath string `json:"mountPath"`
+}
+
 // LMEvalJobSpec defines the desired state of LMEvalJob
 type LMEvalJobSpec struct {
-	// INSERT ADDITIONAL SPEC FIELDS - desired state of cluster
 	// Important: Run "make" to regenerate code after modifying this file
 
 	// Model name
@@ -86,6 +104,11 @@ type LMEvalJobSpec struct {
 	// model, will be saved at per-document granularity
 	// +optional
 	LogSamples *bool `json:"logSamples,omitempty"`
+	// Assign secrets to the environment variables
+	// +optional
+	EnvSecrets []EnvSecret `json:"envSecrets,omitempty"`
+	// Use secrets as files
+	FileSecrets []FileSecret `json:"fileSecrets,omitempty"`
 }
 
 // LMEvalJobStatus defines the observed state of LMEvalJob
