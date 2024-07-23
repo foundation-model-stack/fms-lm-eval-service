@@ -108,9 +108,18 @@ func (d *driverImpl) Run() error {
 	if err := d.updateStatus(lmevalservicev1beta1.RunningJobState); err != nil {
 		return err
 	}
-	err := d.exec()
+	execErr := d.exec()
 
-	return d.updateCompleteStatus(err)
+	// dump stderr and stdout to the console
+	var toConsole = func(file string) {
+		if data, err := os.ReadFile(file); err == nil {
+			os.Stdout.Write(data)
+		}
+	}
+	toConsole(filepath.Join(d.Option.OutputPath, "stdout.log"))
+	toConsole(filepath.Join(d.Option.OutputPath, "stderr.log"))
+
+	return d.updateCompleteStatus(execErr)
 }
 
 func (d *driverImpl) Cleanup() {

@@ -53,7 +53,6 @@ const (
 	DestDriverPath              = "/opt/app-root/src/bin/driver"
 	PodImageKey                 = "pod-image"
 	DriverImageKey              = "driver-image"
-	DriverServiceAccountKey     = "driver-serviceaccount"
 	PodCheckingIntervalKey      = "pod-checking-interval"
 	ImagePullPolicyKey          = "image-pull-policy"
 	GrpcPortKey                 = "grpc-port"
@@ -82,15 +81,14 @@ var (
 	}
 
 	optionKeys = map[string]string{
-		"PodImage":             PodImageKey,
-		"DriverImage":          DriverImageKey,
-		"DriverServiceAccount": DriverServiceAccountKey,
-		"PodCheckingInterval":  PodCheckingIntervalKey,
-		"ImagePullPolicy":      ImagePullPolicyKey,
-		"GrpcPort":             GrpcPortKey,
-		"GrpcService":          GrpcServiceKey,
-		"GrpcServerSecret":     GrpcServerSecretKey,
-		"GrpcClientSecret":     GrpcClientSecretKey,
+		"PodImage":            PodImageKey,
+		"DriverImage":         DriverImageKey,
+		"PodCheckingInterval": PodCheckingIntervalKey,
+		"ImagePullPolicy":     ImagePullPolicyKey,
+		"GrpcPort":            GrpcPortKey,
+		"GrpcService":         GrpcServiceKey,
+		"GrpcServerSecret":    GrpcServerSecretKey,
+		"GrpcClientSecret":    GrpcClientSecretKey,
 	}
 )
 
@@ -113,16 +111,15 @@ type LMEvalJobReconciler struct {
 }
 
 type ServiceOptions struct {
-	PodImage             string
-	DriverImage          string
-	DriverServiceAccount string
-	PodCheckingInterval  time.Duration
-	ImagePullPolicy      corev1.PullPolicy
-	GrpcPort             int
-	GrpcService          string
-	GrpcServerSecret     string
-	GrpcClientSecret     string
-	grpcTLSMode          TLSMode
+	PodImage            string
+	DriverImage         string
+	PodCheckingInterval time.Duration
+	ImagePullPolicy     corev1.PullPolicy
+	GrpcPort            int
+	GrpcService         string
+	GrpcServerSecret    string
+	GrpcClientSecret    string
+	grpcTLSMode         TLSMode
 }
 
 // +kubebuilder:rbac:groups=foundation-model-stack.github.com.github.com,resources=lmevaljobs,verbs=get;list;watch;create;update;patch;delete
@@ -296,15 +293,14 @@ func (r *LMEvalJobReconciler) updateStatus(ctx context.Context, newStatus *backe
 func (r *LMEvalJobReconciler) constructOptionsFromConfigMap(
 	ctx context.Context, configmap *corev1.ConfigMap) error {
 	r.options = &ServiceOptions{
-		DriverImage:          DefaultDriverImage,
-		PodImage:             DefaultPodImage,
-		DriverServiceAccount: DefaultDriverServiceAccount,
-		PodCheckingInterval:  DefaultPodCheckingInterval,
-		ImagePullPolicy:      DefaultImagePullPolicy,
-		GrpcPort:             DefaultGrpcPort,
-		GrpcService:          DefaultGrpcService,
-		GrpcServerSecret:     DefaultGrpcServerSecret,
-		GrpcClientSecret:     DefaultGrpcClientSecret,
+		DriverImage:         DefaultDriverImage,
+		PodImage:            DefaultPodImage,
+		PodCheckingInterval: DefaultPodCheckingInterval,
+		ImagePullPolicy:     DefaultImagePullPolicy,
+		GrpcPort:            DefaultGrpcPort,
+		GrpcService:         DefaultGrpcService,
+		GrpcServerSecret:    DefaultGrpcServerSecret,
+		GrpcClientSecret:    DefaultGrpcClientSecret,
 	}
 
 	log := log.FromContext(ctx)
@@ -462,18 +458,18 @@ func (r *LMEvalJobReconciler) checkScheduledPod(ctx context.Context, log logr.Lo
 	mainIndex := slices.IndexFunc(pod.Status.ContainerStatuses, func(s corev1.ContainerStatus) bool {
 		return s.Name == "main"
 	})
-	if mainIndex == -1 || pod.Status.ContainerStatuses[mainIndex].LastTerminationState.Terminated == nil {
+	if mainIndex == -1 || pod.Status.ContainerStatuses[mainIndex].State.Terminated == nil {
 		// wait for the main container to finish
 		return ctrl.Result{Requeue: true, RequeueAfter: r.options.PodCheckingInterval}, nil
 	}
 
 	// main container finished. update status
 	job.Status.State = lmevalservicev1beta1.CompleteJobState
-	if pod.Status.ContainerStatuses[mainIndex].LastTerminationState.Terminated.ExitCode == 0 {
+	if pod.Status.ContainerStatuses[mainIndex].State.Terminated.ExitCode == 0 {
 		job.Status.Reason = lmevalservicev1beta1.SucceedReason
 	} else {
 		job.Status.Reason = lmevalservicev1beta1.FailedReason
-		job.Status.Message = pod.Status.ContainerStatuses[mainIndex].LastTerminationState.Terminated.Reason
+		job.Status.Message = pod.Status.ContainerStatuses[mainIndex].State.Terminated.Reason
 	}
 
 	err = r.Status().Update(ctx, job)
@@ -573,21 +569,8 @@ func (r *LMEvalJobReconciler) createPod(job *lmevalservicev1beta1.LMEvalJob) *co
 	var runAsNonRootUser = true
 	var ownerRefController = true
 	var runAsUser int64 = 1001030000
-	var secretMode int32 = 420
 
-	var envVars = []corev1.EnvVar{
-		{
-			Name: "GENAI_KEY",
-			ValueFrom: &corev1.EnvVarSource{
-				SecretKeyRef: &corev1.SecretKeySelector{
-					Key: "key",
-					LocalObjectReference: corev1.LocalObjectReference{
-						Name: "genai-key",
-					},
-				},
-			},
-		},
-	}
+	var envVars = generateEnvs(job.Spec.EnvSecrets)
 
 	var volumeMounts = []corev1.VolumeMount{
 		{
@@ -604,86 +587,8 @@ func (r *LMEvalJobReconciler) createPod(job *lmevalservicev1beta1.LMEvalJob) *co
 		},
 	}
 
-	if r.options.grpcTLSMode == TLSMode_mTLS {
-		envVars = append(envVars,
-			corev1.EnvVar{
-				Name:  driver.GrpcClientKeyEnv,
-				Value: "/tmp/k8s-grpc-client/certs/tls.key",
-			},
-			corev1.EnvVar{
-				Name:  driver.GrpcClientCertEnv,
-				Value: "/tmp/k8s-grpc-client/certs/tls.crt",
-			},
-			corev1.EnvVar{
-				Name:  driver.GrpcServerCaEnv,
-				Value: "/tmp/k8s-grpc-server/certs/ca.crt",
-			},
-		)
-
-		volumeMounts = append(volumeMounts,
-			corev1.VolumeMount{
-				Name:      "client-cert",
-				MountPath: "/tmp/k8s-grpc-client/certs",
-			},
-			corev1.VolumeMount{
-				Name:      "server-cert",
-				MountPath: "/tmp/k8s-grpc-server/certs",
-			},
-		)
-
-		volumes = append(volumes,
-			corev1.Volume{
-				Name: "client-cert",
-				VolumeSource: corev1.VolumeSource{
-					Secret: &corev1.SecretVolumeSource{
-						SecretName:  r.options.GrpcClientSecret,
-						DefaultMode: &secretMode,
-					},
-				},
-			},
-			corev1.Volume{
-				Name: "server-cert",
-				VolumeSource: corev1.VolumeSource{
-					Secret: &corev1.SecretVolumeSource{
-						SecretName:  r.options.GrpcServerSecret,
-						DefaultMode: &secretMode,
-						Items: []corev1.KeyToPath{
-							{Key: "ca.crt", Path: "ca.crt"},
-						},
-					},
-				},
-			},
-		)
-	} else if r.options.grpcTLSMode == TLSMode_TLS {
-		envVars = append(envVars,
-			corev1.EnvVar{
-				Name:  driver.GrpcServerCaEnv,
-				Value: "/tmp/k8s-grpc-server/certs/ca.crt",
-			},
-		)
-
-		volumeMounts = append(volumeMounts,
-			corev1.VolumeMount{
-				Name:      "server-cert",
-				MountPath: "/tmp/k8s-grpc-server/certs",
-			},
-		)
-
-		volumes = append(volumes,
-			corev1.Volume{
-				Name: "server-cert",
-				VolumeSource: corev1.VolumeSource{
-					Secret: &corev1.SecretVolumeSource{
-						SecretName:  r.options.GrpcServerSecret,
-						DefaultMode: &secretMode,
-						Items: []corev1.KeyToPath{
-							{Key: "ca.crt", Path: "ca.crt"},
-						},
-					},
-				},
-			},
-		)
-	}
+	envVars, volumes, volumeMounts = r.patch4GrpcTLS(envVars, volumes, volumeMounts, r.options.grpcTLSMode)
+	volumes, volumeMounts = patch4FileSecrets(volumes, volumeMounts, job.Spec.FileSecrets)
 
 	// Then compose the Pod CR
 	pod := corev1.Pod{
@@ -757,9 +662,8 @@ func (r *LMEvalJobReconciler) createPod(job *lmevalservicev1beta1.LMEvalJob) *co
 					Type: corev1.SeccompProfileTypeRuntimeDefault,
 				},
 			},
-			ServiceAccountName: r.options.DriverServiceAccount,
-			Volumes:            volumes,
-			RestartPolicy:      corev1.RestartPolicyNever,
+			Volumes:       volumes,
+			RestartPolicy: corev1.RestartPolicyNever,
 		},
 	}
 	return &pod
@@ -825,4 +729,142 @@ func argsToString(args []lmevalservicev1beta1.Arg) string {
 		equalForms = append(equalForms, fmt.Sprintf("%s=%s", arg.Name, arg.Value))
 	}
 	return strings.Join(equalForms, ",")
+}
+
+func generateEnvs(secrets []lmevalservicev1beta1.EnvSecret) []corev1.EnvVar {
+	var envs = []corev1.EnvVar{}
+	for _, secret := range secrets {
+		if secret.Secret != nil {
+			envs = append(envs, corev1.EnvVar{
+				Name:  secret.Env,
+				Value: *secret.Secret,
+			})
+		} else if secret.SecretRef != nil {
+			envs = append(envs, corev1.EnvVar{
+				Name: secret.Env,
+				ValueFrom: &corev1.EnvVarSource{
+					SecretKeyRef: secret.SecretRef,
+				},
+			})
+		}
+	}
+
+	return envs
+}
+
+func (r *LMEvalJobReconciler) patch4GrpcTLS(
+	envVars []corev1.EnvVar,
+	volumes []corev1.Volume,
+	volumeMounts []corev1.VolumeMount,
+	tlsMode TLSMode) ([]corev1.EnvVar, []corev1.Volume, []corev1.VolumeMount) {
+
+	var secretMode int32 = 420
+
+	if tlsMode == TLSMode_mTLS {
+		envVars = append(envVars,
+			corev1.EnvVar{
+				Name:  driver.GrpcClientKeyEnv,
+				Value: "/tmp/k8s-grpc-client/certs/tls.key",
+			},
+			corev1.EnvVar{
+				Name:  driver.GrpcClientCertEnv,
+				Value: "/tmp/k8s-grpc-client/certs/tls.crt",
+			},
+			corev1.EnvVar{
+				Name:  driver.GrpcServerCaEnv,
+				Value: "/tmp/k8s-grpc-server/certs/ca.crt",
+			},
+		)
+
+		volumeMounts = append(volumeMounts,
+			corev1.VolumeMount{
+				Name:      "client-cert",
+				MountPath: "/tmp/k8s-grpc-client/certs",
+				ReadOnly:  true,
+			},
+			corev1.VolumeMount{
+				Name:      "server-cert",
+				MountPath: "/tmp/k8s-grpc-server/certs",
+				ReadOnly:  true,
+			},
+		)
+
+		volumes = append(volumes,
+			corev1.Volume{
+				Name: "client-cert",
+				VolumeSource: corev1.VolumeSource{
+					Secret: &corev1.SecretVolumeSource{
+						SecretName:  r.options.GrpcClientSecret,
+						DefaultMode: &secretMode,
+					},
+				},
+			},
+			corev1.Volume{
+				Name: "server-cert",
+				VolumeSource: corev1.VolumeSource{
+					Secret: &corev1.SecretVolumeSource{
+						SecretName:  r.options.GrpcServerSecret,
+						DefaultMode: &secretMode,
+						Items: []corev1.KeyToPath{
+							{Key: "ca.crt", Path: "ca.crt"},
+						},
+					},
+				},
+			},
+		)
+	} else if tlsMode == TLSMode_TLS {
+		envVars = append(envVars,
+			corev1.EnvVar{
+				Name:  driver.GrpcServerCaEnv,
+				Value: "/tmp/k8s-grpc-server/certs/ca.crt",
+			},
+		)
+
+		volumeMounts = append(volumeMounts,
+			corev1.VolumeMount{
+				Name:      "server-cert",
+				MountPath: "/tmp/k8s-grpc-server/certs",
+			},
+		)
+
+		volumes = append(volumes,
+			corev1.Volume{
+				Name: "server-cert",
+				VolumeSource: corev1.VolumeSource{
+					Secret: &corev1.SecretVolumeSource{
+						SecretName:  r.options.GrpcServerSecret,
+						DefaultMode: &secretMode,
+						Items: []corev1.KeyToPath{
+							{Key: "ca.crt", Path: "ca.crt"},
+						},
+					},
+				},
+			},
+		)
+	}
+
+	return envVars, volumes, volumeMounts
+}
+
+func patch4FileSecrets(
+	volumes []corev1.Volume,
+	volumeMounts []corev1.VolumeMount,
+	secrets []lmevalservicev1beta1.FileSecret) ([]corev1.Volume, []corev1.VolumeMount) {
+
+	var counter = 1
+	for _, secret := range secrets {
+		volumes = append(volumes, corev1.Volume{
+			Name: fmt.Sprintf("secVol%d", counter),
+			VolumeSource: corev1.VolumeSource{
+				Secret: &secret.SecretRef,
+			},
+		})
+		volumeMounts = append(volumeMounts, corev1.VolumeMount{
+			Name:      fmt.Sprintf("secVol%d", counter),
+			MountPath: secret.MountPath,
+			ReadOnly:  true,
+		})
+		counter++
+	}
+	return volumes, volumeMounts
 }

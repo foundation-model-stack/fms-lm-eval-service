@@ -70,6 +70,77 @@
                   "include_path": {
                     "type": "string",
                     "description": "Path to include in the evaluation."
+                  },
+                  "secrets": {
+                    "type": "array",
+                    "description": "Provide the secrets to run the evulation job",
+                    "items": {
+                      "type": "object",
+                      "description": "create environment variables to store the secrets or mount the secrets as files",
+                      "oneOf": [
+                        {
+                          "properties": {
+                            "mountPath": {
+                              "type": "string",
+                              "description": "where to mount the secret object to"
+                            },
+                            "referenceObj": {
+                              "type": "object",
+                              "description": "use a secret object",
+                              "properties": {
+                                "name": {
+                                  "type": "string",
+                                  "description": "secret object's name"
+                                },
+                                "files": {
+                                  "type": "array",
+                                  "description": "specify the keys in a secret object and the path",
+                                  "items": {
+                                    "type": "object",
+                                    "properties": {
+                                      "key": {
+                                        "type": "string",
+                                        "description": "specify the key of the secret object"
+                                      },
+                                      "path": {
+                                        "type": "string",
+                                        "description": "specify the file path"
+                                      }
+                                    }
+                                  }
+                                }
+                              }
+                            }
+                          }
+                        },
+                        {
+                          "properties": {
+                            "env": {
+                              "type": "string",
+                              "description": "use the environment variable to access the secret"
+                            },
+                            "key": {
+                              "type": "string",
+                              "description": "the secret value"
+                            },
+                            "referenceObj": {
+                              "type": "object",
+                              "description": "use a secret object",
+                              "properties": {
+                                "name": {
+                                  "type": "string",
+                                  "description": "secret object's name"
+                                },
+                                "key": {
+                                  "type": "string",
+                                  "description": "specify the key of the secret object"
+                                }
+                              }
+                            }
+                          }
+                        }
+                      ]
+                    }
                   }
                 },
                 "required": [
