@@ -48,7 +48,6 @@ flowchart RL
                 G3[job3]
                 classDef pod fill:#990000,stroke:#990000,stroke-width:2px
             end
-            D --> |Create/Delete pod| G1:::pod & G2:::pod & G3:::pod
         end
         subgraph Control-Plane
             E[(etcd)]
@@ -56,6 +55,7 @@ flowchart RL
             classDef control fill:#339966,stroke:#669999,stroke-width:2px
         end
         D:::deploy <--> |reconcile LMEvalJob| F:::control
+        D --> |Create/Delete pod| F:::control
         C:::deploy <--> |Create/Get/Update LMEvalJob| F
         G1 & G2 & G3 --> |Collect results and update LMEvalJob| D
         F <--> E:::control
