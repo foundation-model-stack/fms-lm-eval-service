@@ -57,7 +57,7 @@ flowchart RL
         D:::deploy <--> |reconcile LMEvalJob| F:::control
         D --> |Create/Delete pod| F:::control
         C:::deploy <--> |Create/Get/Update LMEvalJob| F
-        G1 & G2 & G3 --> |Collect results and update LMEvalJob| D
+        D --> |Collect results and update LMEvalJob| G1 & G2 & G3
         F <--> E:::control
     end
 ```
